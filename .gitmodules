@@ -1,0 +1,3 @@
+[submodule "components/esp32-mcp2515"]
+	path = components/esp32-mcp2515
+	url = https://github.com/zeroomega/esp32-mcp2515.git
