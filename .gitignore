@@ -1,3 +1,5 @@
 build
-example_test.py
 .vscode
+sdkconfig
+sdkconfig.ci
+sdkconfig.old
