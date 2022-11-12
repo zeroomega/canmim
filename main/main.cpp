@@ -29,16 +29,18 @@
 // CAN ID for OIL Pressure
 #define OIL_PRESSURE_CAN_ID 0x662
 
+// Resistors value in kOhm for the voltage divider.
 #define OIL_PRESSURE_R1 10
 #define OIL_PRESSURE_R2 22
 
+// Characteristics of the oil pressure sensor.
 #define OIL_PRESSURE_VL 0.5f
 #define OIL_PRESSURE_VH 4.5f
 #define OIL_PRESSURE_PMAX 150
 
 // By default ESP32 timer is 80,000,000 Hz (80Mhz)
-// With divider of 800, the divider counter tick
-// every 0.000001 sec. 
+// With a divider of 800, the divider counter ticks
+// every 0.00001 sec.
 #define TIMER_DIVIDER TIMER_BASE_CLK / 100000
 
 
