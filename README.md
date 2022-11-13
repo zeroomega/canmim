@@ -38,7 +38,7 @@ Please follow the guide at https://docs.espressif.com/projects/esp-idf/en/v4.3.1
 ## Setup and build the project
 
 ```
-cd canmin
+cd canmim
 idf.py set-target=esp32c3
 idf.py build
 ```
