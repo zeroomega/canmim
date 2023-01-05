@@ -14,28 +14,33 @@
 #include "mcp2515.h"
 
 // SPI PIN Map
-#define MCP_SCK   8
+#define MCP_SCK   7
 #define MCP_MOSI 10
-#define MCP_MISO  9
-#define MCP_CS    7
+#define MCP_MISO  8
+#define MCP_CS    9
+#define MCP_INT   GPIO_NUM_6
 
 // CAN Controller PIN Map
 #define CAN_TX    GPIO_NUM_3
 #define CAN_RX    GPIO_NUM_2
 
+// LED PIN Map
+#define LED_PIN   GPIO_NUM_4
+
 // ADC PIN Map
 #define ADC_OILP ADC1_CHANNEL_0
+#define ADC_AUX  ADC1_CHANNEL_1
 
 // CAN ID for OIL Pressure
 #define OIL_PRESSURE_CAN_ID 0x662
 
 // Resistors value in kOhm for the voltage divider.
 #define OIL_PRESSURE_R1 10
-#define OIL_PRESSURE_R2 22
+#define OIL_PRESSURE_R2 50
 
 // Characteristics of the oil pressure sensor.
-#define OIL_PRESSURE_VL 0.5f
-#define OIL_PRESSURE_VH 4.5f
+#define OIL_PRESSURE_VL 500
+#define OIL_PRESSURE_VH 4500
 #define OIL_PRESSURE_PMAX 150
 
 // By default ESP32 timer is 80,000,000 Hz (80Mhz)
@@ -77,31 +82,46 @@ void init_mcu();
 
 void init_timer();
 
-void update_adc();
+void update_oilp();
 
 bool IRAM_ATTR timer_callback(void* arg);
 
 uint8_t get_normalized_oil_pressure();
 
-void send_oil_pressure_to_can(MCP2515 &mcpCan, uint8_t pressure);
+uint32_t get_normalized_aux();
+
+uint32_t get_immediate_aux();
+
+void send_adc_data_to_can(MCP2515 &mcpCan, uint8_t pressure, uint32_t aux_data);
 
 void handling_incoming_message(MCP2515&mcpCan);
 // Helper function to send received CAN message to the output CAN bus.
 // Errors will be ignored.
 void sendTWAIMessageToCan(MCP2515 &mcpCan, twai_message_t *twaiMessage);
 
-uint32_t adc_level1[10];
-uint32_t adc_level1_pointer = 0;
-uint32_t adc_level1_rolling_sum = 0;
-uint32_t adc_level2[3];
-uint32_t adc_level2_pointer = 0;
-uint32_t adc_level2_rolling_sum = 0;
-uint32_t adc_read_counter = 0;
+uint32_t adc1_level1[10];
+uint32_t adc1_level1_pointer = 0;
+uint32_t adc1_level1_rolling_sum = 0;
+uint32_t adc1_level2[3];
+uint32_t adc1_level2_pointer = 0;
+uint32_t adc1_level2_rolling_sum = 0;
+uint32_t adc1_read_counter = 0;
 bool shouldSendOilPressure = false;
+
+uint32_t adc2_level1[10];
+uint32_t adc2_level1_pointer = 0;
+uint32_t adc2_level1_rolling_sum = 0;
+uint32_t adc2_level2[3];
+uint32_t adc2_level2_pointer = 0;
+uint32_t adc2_level2_rolling_sum = 0;
+uint32_t adc2_read_counter = 0;
+bool shouldSendADC2 = false;
+
 uint32_t sampleCounter1 = 0;
 uint32_t sampleCounter2 = 0;
 
 extern "C" void app_main(void) {
+    gpio_set_pull_mode(MCP_INT, GPIO_FLOATING);
     init_mcu();
     init_can();
     init_spi();
@@ -120,17 +140,18 @@ extern "C" void app_main(void) {
     printf("ADC initialized\n");
     init_timer();
     printf("Timer initialized\n");
-   
     
     while(1) {
         if (shouldUpdateADC) {
             shouldUpdateADC = false;
-            update_adc();
+            update_oilp();
         }
-        if (adc_read_counter >= 5) {
-            adc_read_counter = 0;
+        if (adc1_read_counter >= 5) {
+            adc1_read_counter = 0;
+            adc2_read_counter = 0;
             uint8_t pressure = get_normalized_oil_pressure();
-            send_oil_pressure_to_can(mcpCan, pressure);
+            uint32_t aux_data = get_immediate_aux();
+            send_adc_data_to_can(mcpCan, pressure, aux_data);
         }
         handling_incoming_message(mcpCan);
     }
@@ -152,16 +173,19 @@ void init_mcu() {
             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
 
     printf("Minimum free heap size: %d bytes\n", esp_get_minimum_free_heap_size());
-    memset(&adc_level1, 0, sizeof(adc_level1));
-    memset(&adc_level2, 0, sizeof(adc_level2));
+    memset(&adc1_level1, 0, sizeof(adc1_level1));
+    memset(&adc1_level2, 0, sizeof(adc1_level2));
 }
 
 bool IsPassthroughID(twai_message_t *message) {
-    for (int i = 0; i < sizeof(kPassthroughIDs)/sizeof(uint32_t); i++) {
-        if (kPassthroughIDs[i] == message->identifier)
-            return true;
-    }
-    return false;
+    // for (int i = 0; i < sizeof(kPassthroughIDs)/sizeof(uint32_t); i++) {
+    //     if (kPassthroughIDs[i] == message->identifier)
+    //         return true;
+    // }
+    // return false;
+    // For GT86, since we don't have a full list of CAN ID that datalogger listens to
+    // let all CAN IDs pass through.
+    return true;
 }
 
 void fatal_error() {
@@ -194,7 +218,12 @@ void init_adc() {
     }
     ret = adc1_config_channel_atten(ADC_OILP, ADC_ATTEN_11db);
     if (ret != ESP_OK) {
-        ESP_LOGE("ADC", "ADC1 ATTEN Init failed %s", esp_err_to_name(ret));
+        ESP_LOGE("ADC", "OILP ATTEN Init failed %s", esp_err_to_name(ret));
+        fatal_error();
+    }
+    ret = adc1_config_channel_atten(ADC_AUX, ADC_ATTEN_11db);
+    if (ret != ESP_OK) {
+        ESP_LOGE("ADC", "AUX ATTEN Init failed %s", esp_err_to_name(ret));
         fatal_error();
     }
 }
@@ -296,32 +325,49 @@ void init_timer() {
     }
 }
 
-void update_adc() {
+void update_oilp() {
     uint32_t raw = adc1_get_raw(ADC_OILP);
-    adc_read_counter++;
-    adc_level1_rolling_sum = adc_level1_rolling_sum - adc_level1[adc_level1_pointer] + raw;
-    adc_level1[adc_level1_pointer] = raw;
-    adc_level1_pointer++;
-    if (adc_level1_pointer == sizeof(adc_level1)/sizeof(uint32_t))
-        adc_level1_pointer = 0;
-    if (adc_level1_pointer != 0) {
-        uint32_t level2_raw = adc_level1_rolling_sum / (sizeof(adc_level1)/sizeof(uint32_t));
-        adc_level2_rolling_sum = adc_level2_rolling_sum - adc_level2[adc_level2_pointer] + level2_raw;
-        adc_level2[adc_level2_pointer] = level2_raw;
-        adc_level2_pointer++;
-        if (adc_level2_pointer == sizeof(adc_level2)/sizeof(uint32_t))
-            adc_level2_pointer = 0;
+    adc1_read_counter++;
+    adc1_level1_rolling_sum = adc1_level1_rolling_sum - adc1_level1[adc1_level1_pointer] + raw;
+    adc1_level1[adc1_level1_pointer] = raw;
+    adc1_level1_pointer++;
+    if (adc1_level1_pointer == sizeof(adc1_level1)/sizeof(uint32_t))
+        adc1_level1_pointer = 0;
+    if (adc1_level1_pointer != 0) {
+        uint32_t level2_raw = adc1_level1_rolling_sum / (sizeof(adc1_level1)/sizeof(uint32_t));
+        adc1_level2_rolling_sum = adc1_level2_rolling_sum - adc1_level2[adc1_level2_pointer] + level2_raw;
+        adc1_level2[adc1_level2_pointer] = level2_raw;
+        adc1_level2_pointer++;
+        if (adc1_level2_pointer == sizeof(adc1_level2)/sizeof(uint32_t))
+            adc1_level2_pointer = 0;
+    }
+
+    raw = adc1_get_raw(ADC_AUX);
+    adc2_read_counter++;
+    adc2_level1_rolling_sum = adc2_level1_rolling_sum - adc2_level1[adc2_level1_pointer] + raw;
+    adc2_level1[adc2_level1_pointer] = raw;
+    adc2_level1_pointer++;
+    if (adc2_level1_pointer == sizeof(adc2_level1)/sizeof(uint32_t))
+        adc2_level1_pointer = 0;
+    if (adc2_level1_pointer != 0) {
+        uint32_t level2_raw = adc2_level1_rolling_sum / (sizeof(adc2_level1)/sizeof(uint32_t));
+        adc2_level2_rolling_sum = adc2_level2_rolling_sum - adc2_level2[adc2_level2_pointer] + level2_raw;
+        adc2_level2[adc2_level2_pointer] = level2_raw;
+        adc2_level2_pointer++;
+        if (adc2_level2_pointer == sizeof(adc2_level2)/sizeof(uint32_t))
+            adc2_level2_pointer = 0;
     }
 }
 
 uint8_t get_normalized_oil_pressure() {
-    uint32_t normalized_adc_raw = adc_level2_rolling_sum / (sizeof(adc_level2)/sizeof(uint32_t));
+    uint32_t normalized_adc_raw = adc1_level2_rolling_sum / (sizeof(adc1_level2)/sizeof(uint32_t));
     uint32_t mV = esp_adc_cal_raw_to_voltage(normalized_adc_raw, &adc1_chars);
-    float actualV = ((float)mV)/OIL_PRESSURE_R1*(OIL_PRESSURE_R1+OIL_PRESSURE_R2)/1000;
+    //float actualV = ((float)mV)/OIL_PRESSURE_R1*(OIL_PRESSURE_R1+OIL_PRESSURE_R2)/1000;
+    uint32_t actualV = mV * (OIL_PRESSURE_R1+OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
     sampleCounter2++;
     if (sampleCounter2 >= 1000) {
         sampleCounter2  = 0;
-        ESP_LOGD("ADC", "Sample Voltage: %.2f", actualV);
+        ESP_LOGD("ADC", "Sample Voltage: %d", actualV);
     }
     if (actualV < OIL_PRESSURE_VL)
         actualV = 0;
@@ -331,17 +377,34 @@ uint8_t get_normalized_oil_pressure() {
     return (uint8_t)actualV;
 }
 
+uint32_t get_normalized_aux() {
+    uint32_t normalized_adc_raw = adc2_level2_rolling_sum / (sizeof(adc2_level2)/sizeof(uint32_t));
+    uint32_t mV = esp_adc_cal_raw_to_voltage(normalized_adc_raw, &adc1_chars);
+    return mV;
+}
+
+uint32_t get_immediate_aux() {
+    uint32_t raw = adc1_get_raw(ADC_AUX);
+    uint32_t mV = esp_adc_cal_raw_to_voltage(raw, &adc1_chars);
+     uint32_t actualV = mV * (OIL_PRESSURE_R1+OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
+     return actualV;
+}
+
 bool IRAM_ATTR timer_callback(void* arg) {
     shouldUpdateADC = true;
     return false;
 }
 
-void send_oil_pressure_to_can(MCP2515& mcpCan, uint8_t pressure) {
+void send_adc_data_to_can(MCP2515& mcpCan, uint8_t pressure, uint32_t aux_data) {
     can_frame frame;
     memset(&frame, 0, sizeof(can_frame));
     frame.can_id = OIL_PRESSURE_CAN_ID;
     frame.can_dlc = 8;
     frame.data[0] = pressure;
+    frame.data[1] = aux_data & 0xFF;
+    frame.data[2] =  (aux_data >> 8) & 0xFF;
+    frame.data[3] =  (aux_data >> 16) & 0xFF;
+    frame.data[4] =  (aux_data >> 24) & 0xFF;
     MCP2515::ERROR err = mcpCan.sendMessage(&frame);
     if (err != MCP2515::ERROR_OK)
         ESP_LOGE("MCPCAN", "Failed sending oil pressure to CAN %d", err);
