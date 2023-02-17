@@ -12,6 +12,8 @@
 #include "driver/timer.h"
 #include "esp_adc_cal.h"
 #include "mcp2515.h"
+#include "led_strip.h"
+#include "driver/rmt.h"
 
 // SPI PIN Map
 #define MCP_SCK   7
@@ -84,6 +86,8 @@ void init_timer();
 
 void update_oilp();
 
+void set_led();
+
 bool IRAM_ATTR timer_callback(void* arg);
 
 uint8_t get_normalized_oil_pressure();
@@ -140,6 +144,8 @@ extern "C" void app_main(void) {
     printf("ADC initialized\n");
     init_timer();
     printf("Timer initialized\n");
+    set_led();
+    printf("led set\n");
     
     while(1) {
         if (shouldUpdateADC) {
@@ -436,4 +442,13 @@ void handling_incoming_message(MCP2515&mcpCan) {
         default:
             ESP_LOGE("ESPCAN", "Failed when receiving due to %s", esp_err_to_name(ret_code));
     }
+}
+
+void set_led() {
+    static led_strip_t *pStrip_a;
+    pStrip_a = led_strip_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    pStrip_a->clear(pStrip_a, 50);
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+    pStrip_a->set_pixel(pStrip_a, 0, 6, 10, 6);
+    pStrip_a->refresh(pStrip_a, 100);
 }
