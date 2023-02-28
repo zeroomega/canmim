@@ -119,6 +119,7 @@ void handling_incoming_message(MCP2515&mcpCan);
 void sendTWAIMessageToCan(MCP2515 &mcpCan, twai_message_t *twaiMessage);
 
 uint32_t adcSampleCounter = 0;
+uint32_t canSampleCounter = 0;
 
 extern "C" void app_main(void) {
     gpio_set_pull_mode(MCP_INT, GPIO_FLOATING);
@@ -383,9 +384,9 @@ void handling_incoming_message(MCP2515&mcpCan) {
     ret_code = twai_receive(&message, pdMS_TO_TICKS(1));
     switch(ret_code) {
         case ESP_OK:
-            adcSampleCounter++;
-            if (adcSampleCounter >= 1000) {
-                adcSampleCounter = 0;
+            canSampleCounter++;
+            if (canSampleCounter >= 1000) {
+                canSampleCounter = 0;
                 ESP_LOGD("ESPCAN", "Sampling Message ID: %" PRIi32 "", message.identifier);
                 for (int i = 0; i < message.data_length_code; i++) {
                     ESP_LOGD("ESPCAN", "Data byte %d = %" PRIi8 "", i, message.data[i]);
