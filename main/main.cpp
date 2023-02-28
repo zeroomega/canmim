@@ -111,7 +111,7 @@ void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv);
 
 uint8_t calc_oil_pressure(uint32_t adc_mv);
 
-void send_adc_data_to_can(MCP2515 &mcpCan, uint8_t pressure, uint32_t aux_data);
+void send_adc_data_to_can(MCP2515& mcpCan, uint32_t adc1_mv, uint32_t adc2_mv);
 
 void handling_incoming_message(MCP2515&mcpCan);
 // Helper function to send received CAN message to the output CAN bus.
@@ -149,8 +149,7 @@ extern "C" void app_main(void) {
         if (shouldUpdateADC) {
             shouldUpdateADC = false;
             update_adc(&adc1_mv, &adc2_mv);
-            uint8_t oil_p = calc_oil_pressure(adc1_mv);
-            send_adc_data_to_can(mcpCan, oil_p, adc2_mv);
+            send_adc_data_to_can(mcpCan, adc1_mv, adc2_mv);
         }
         handling_incoming_message(mcpCan);
     }
