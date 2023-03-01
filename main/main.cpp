@@ -120,6 +120,9 @@ void sendTWAIMessageToCan(MCP2515 &mcpCan, twai_message_t *twaiMessage);
 
 uint32_t adcSampleCounter = 0;
 uint32_t canSampleCounter = 0;
+volatile uint32_t canFrameRatePerSec = 0;
+int64_t canMessageCounter = 0;
+int64_t canMessageBeginTime = 0;
 
 extern "C" void app_main(void) {
     gpio_set_pull_mode(MCP_INT, GPIO_FLOATING);
@@ -143,6 +146,7 @@ extern "C" void app_main(void) {
     printf("led set\n");
     
     // Start ADC measurement.
+    canMessageBeginTime = esp_timer_get_time();
     ESP_ERROR_CHECK(adc_continuous_start(adc1_cont_handle));
     while(1) {
         uint32_t adc1_mv, adc2_mv;
@@ -152,6 +156,15 @@ extern "C" void app_main(void) {
             send_adc_data_to_can(mcpCan, adc1_mv, adc2_mv);
         }
         handling_incoming_message(mcpCan);
+        //canMessageCounter++;
+        if (canMessageCounter >= 3000) {
+            int64_t currentTime = esp_timer_get_time();
+            canMessageCounter *= 1000000;
+            canFrameRatePerSec = canMessageCounter / (currentTime - canMessageBeginTime);
+            canMessageBeginTime = currentTime;
+            canMessageCounter = 0;
+            ESP_LOGD("CAN", "CAN FRAME RATE %"PRIi32, canFrameRatePerSec);
+        }
     }
 }
 
@@ -363,6 +376,7 @@ void timer_callback(void* arg) {
 
 void send_adc_data_to_can(MCP2515& mcpCan, uint32_t adc1_mv, uint32_t adc2_mv) {
     uint8_t pressure = calc_oil_pressure(adc1_mv);
+    uint32_t canFrameRate = canFrameRatePerSec;
     can_frame frame;
     memset(&frame, 0, sizeof(can_frame));
     frame.can_id = OIL_PRESSURE_CAN_ID;
@@ -372,6 +386,9 @@ void send_adc_data_to_can(MCP2515& mcpCan, uint32_t adc1_mv, uint32_t adc2_mv) {
     frame.data[2] = (adc1_mv >> 8) & 0xFF;
     frame.data[3] = adc2_mv & 0xFF;
     frame.data[4] = (adc2_mv >> 8) & 0xFF;
+    frame.data[5] = canFrameRate & 0xFF;
+    frame.data[6] = (canFrameRate >> 8) & 0xFF;
+    frame.data[7] = (canFrameRate >> 16) & 0xFF;
     MCP2515::ERROR err = mcpCan.sendMessage(&frame);
     if (err != MCP2515::ERROR_OK)
         ESP_LOGE("MCPCAN", "Failed sending ADC data to CAN %d", err);
@@ -380,16 +397,14 @@ void send_adc_data_to_can(MCP2515& mcpCan, uint32_t adc1_mv, uint32_t adc2_mv) {
 void handling_incoming_message(MCP2515&mcpCan) {
     twai_message_t message;
     esp_err_t ret_code;
-    ret_code = twai_receive(&message, pdMS_TO_TICKS(1));
+    ret_code = twai_receive(&message, 1);
     switch(ret_code) {
         case ESP_OK:
             canSampleCounter++;
-            if (canSampleCounter >= 1000) {
+            canMessageCounter++;
+            if (canSampleCounter >= 5000) {
                 canSampleCounter = 0;
                 ESP_LOGD("ESPCAN", "Sampling Message ID: %" PRIi32 "", message.identifier);
-                for (int i = 0; i < message.data_length_code; i++) {
-                    ESP_LOGD("ESPCAN", "Data byte %d = %" PRIi8 "", i, message.data[i]);
-                }
             }
             if (!IsPassthroughID(&message))
                 break;
