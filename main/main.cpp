@@ -1,6 +1,5 @@
-#include <stdio.h>
-#include <string.h>
 #include "sdkconfig.h"
+#include "board_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -20,50 +19,10 @@
 #include "ble.h"
 #include "driver/rmt.h"
 
-// SPI PIN Map
-#define MCP_SCK   7
-#define MCP_MOSI 10
-#define MCP_MISO  8
-#define MCP_CS    9
-#define MCP_INT   GPIO_NUM_6
-
-// CAN Controller PIN Map
-#define CAN_TX    GPIO_NUM_3
-#define CAN_RX    GPIO_NUM_2
-
-// LED PIN Map
-#define LED_PIN   GPIO_NUM_4
-
-// ADC PIN Map
-#define ADC_OILP ADC1_CHANNEL_0
-#define ADC_AUX  ADC1_CHANNEL_1
-
-// CAN ID for OIL Pressure
-#define OIL_PRESSURE_CAN_ID 0x662
-
-// Resistors value in kOhm for the voltage divider.
-#define OIL_PRESSURE_R1 10
-#define OIL_PRESSURE_R2 50
-
-// Characteristics of the oil pressure sensor.
-#define OIL_PRESSURE_VL 500
-#define OIL_PRESSURE_VH 4500
-#define OIL_PRESSURE_PMAX 150
-
+#include <stdio.h>
+#include <string.h>
 
 #define ADC_FRAME_SIZE 4 * 100
-
-// By default ESP32 timer is 80,000,000 Hz (80Mhz)
-// With a divider of 800, the divider counter ticks
-// every 0.00001 sec.
-#define TIMER_DIVIDER TIMER_BASE_CLK / 100000
-
-/* 16 Bit SPP Service UUID */
-#define BLE_SVC_SPP_UUID16         0xABF0
-
-/* 16 Bit SPP Service Characteristic UUID */
-#define BLE_SVC_SPP_CHR_UUID16     0xABF1
-
 
 // Global SPI Handle for MCP2515 Can Controller
 spi_device_handle_t spi_mcp2515;
@@ -75,80 +34,26 @@ QueueHandle_t bleOutputQueue;
 
 volatile bool shouldUpdateADC = false;
 
-static uint8_t own_addr_type;
 
-static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data) {
-    shouldUpdateADC = true;
-    return true;
-}
+#ifdef CANMIM_PRINT_METRICS
 
-uint32_t kPassthroughIDs[] = {
-    0x40,   // RPM, PPS
-    0x138,  // Steering Angle
-    0x139,  // Brake pressure.
-    0x345,  // OilTemp, ECT
-};
+volatile size_t CAN_IN_COUNT = 0;
+volatile size_t CAN_OUT_COUNT = 0;
+volatile size_t BLE_OUT_COUNT = 0;
+volatile size_t BLE_NOTIFIED_COUNT = 0;
+volatile int64_t MCP_TIMER = 0;
+volatile uint32_t ADC1_MV = 0;
+volatile uint32_t ADC2_MV = 0;
 
-ble_uuid16_t ble_srv_chr_uuid = {
-    .u = {
-        .type = BLE_UUID_TYPE_16,
-    },
-    .value = {BLE_SVC_SPP_CHR_UUID16}
-};
+#endif
 
-ble_uuid16_t ble_srv_uuid = {
-    .u = {
-        .type = BLE_UUID_TYPE_16,
-    },
-    .value = {BLE_SVC_SPP_UUID16}
-};
-
-ble_uuid16_t fields_uuid[] = {
-    ble_srv_uuid,
-};
-// static ble_uuid_t *ble_srv_uuid = BLE_UUID16_DECLARE(BLE_SVC_SPP_CHR_UUID16);
-
-int connection_handle[CONFIG_BT_NIMBLE_MAX_CONNECTIONS + 1];
-
-static uint8_t gatt_svr_chr_val;
-static uint16_t ble_svc_gatt_read_val_handle;
-static uint8_t gatt_svr_dsc_val;
-bool should_ble_notify;
-
-/* Define new custom service */
-static const struct ble_gatt_svc_def new_ble_svc_gatt_defs[] = {
-    {
-        /*** Service: SPP */
-        .type = BLE_GATT_SVC_TYPE_PRIMARY,
-        .uuid = &ble_srv_uuid.u,
-        .characteristics = (struct ble_gatt_chr_def[])
-        { {
-                /* Support SPP service */
-                .uuid = &ble_srv_chr_uuid.u,
-                .access_cb = ble_svc_gatt_handler,
-                .arg = NULL,
-                .descriptors = NULL,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE,
-                .min_key_size = 0,
-                .val_handle = &ble_svc_gatt_read_val_handle,
-            }, {
-                0, /* No more characteristics */
-            }
-        },
-    },
-    {
-        0, /* No more services. */
-    },
-};
+bool can_isolation = true;
 
 void incomingCANTask(void * pvParameter);
 
 void outgoingCANTask(void * pvParameter);
 
 void bleTask(void *pvParameter);
-
-// Test if CAN message should be pass through.
-bool IsPassthroughID(twai_message_t *message);
 
 // Helper function to cause system reboot when fatal error happens.
 void fatal_error();
@@ -163,21 +68,9 @@ void init_spi();
 // Helper function to initiate ESP32 CAN Controller.
 void init_can();
 
-void init_mcu();
-
-void init_timer();
-
-void update_oilp();
+void print_mcu_info();
 
 void set_led();
-
-void timer_callback(void* arg);
-
-uint8_t get_normalized_oil_pressure();
-
-uint32_t get_normalized_aux();
-
-uint32_t get_immediate_aux();
 
 void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv);
 
@@ -186,26 +79,49 @@ uint8_t calc_oil_pressure(uint32_t adc_mv);
 void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv);
 
 void handling_incoming_message();
-// Helper function to send received CAN message to the output CAN bus.
-// Errors will be ignored.
-void sendTWAIMessageToCan(MCP2515 &mcpCan, twai_message_t *twaiMessage);
 
-uint32_t adcSampleCounter = 0;
-uint32_t canSampleCounter = 0;
-volatile uint32_t canFrameRatePerSec = 0;
-int64_t canMessageCounter = 0;
-int64_t canMessageBeginTime = 0;
+static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data) {
+    shouldUpdateADC = true;
+    return true;
+}
+
+#ifdef CANMIM_PRINT_METRICS
+
+static void tick_timer_cb(void *arg) {
+    size_t can_in_count = CAN_IN_COUNT;
+    size_t can_out_count = CAN_OUT_COUNT;
+    size_t ble_out_count = BLE_OUT_COUNT;
+    size_t ble_notified_count = BLE_NOTIFIED_COUNT;
+    int64_t mcp_timer  = MCP_TIMER;
+    ESP_LOGI("TIMER", "can_in_count: %zu", can_in_count);
+    ESP_LOGI("TIMER", "can_out_count: %zu", can_out_count);
+    ESP_LOGI("TIMER", "ble_out_count: %zu", ble_out_count);
+    ESP_LOGI("TIMER", "ble_notified_count: %zu", ble_notified_count);
+    ESP_LOGI("TIMER", "MCP_TIMER: %zu microsec", (size_t)mcp_timer);
+    ESP_LOGI("TIMER", "Sample, %" PRIi32 " mV %" PRIi32 " mV", ADC1_MV, ADC2_MV);
+    CAN_IN_COUNT = 0;
+    CAN_OUT_COUNT = 0;
+    BLE_OUT_COUNT = 0;
+    BLE_NOTIFIED_COUNT = 0;
+    MCP_TIMER = 0;
+}
+
+#endif
 
 extern "C" void app_main(void) {
-    gpio_set_pull_mode(MCP_INT, GPIO_FLOATING);
-    init_mcu();
+    // Set MCP2525 interrupt pin to float as we don't use it
+    // for now.
+    gpio_set_pull_mode((gpio_num_t)MCP_INT, GPIO_FLOATING);
+    print_mcu_info();
     init_can();
-    init_spi();
-    printf("SPI Init\n");
+    if (can_isolation) {
+        init_spi();
+        printf("SPI Init\n");
+    }
     init_adc();
-    printf("ADC initialized\n");
+    printf("ADC Init\n");
     set_led();
-    printf("led set\n");
+    printf("LED Init\n");
 
     // Init NVS, which is used by WiFi and BLE stack.
     esp_err_t ret = nvs_flash_init();
@@ -215,15 +131,29 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+#ifdef CANMIM_PRINT_METRICS
+    const esp_timer_create_args_t tick_timer_args = {
+        .callback = &tick_timer_cb,
+        .arg = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "tick_timer",
+        .skip_unhandled_events = false,
+    };
+
+    esp_timer_handle_t tick_timer = NULL;
+    ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, 1000000));
+#endif
+
     canOutputQueue = xQueueCreate(50, sizeof(can_frame));
     bleOutputQueue = xQueueCreate(50, sizeof(can_frame));
 
-    xTaskCreate(incomingCANTask, "incomingCANTask", 4096, NULL, tskIDLE_PRIORITY, NULL);
-    xTaskCreate(outgoingCANTask, "outgoingCANTask", 4096, NULL, tskIDLE_PRIORITY, NULL);
-    xTaskCreate(bleTask, "bleTask", 4096, NULL, tskIDLE_PRIORITY, NULL);
+    xTaskCreate(incomingCANTask, "incomingCANTask", 4096, NULL, 1, NULL);
+    xTaskCreate(outgoingCANTask, "outgoingCANTask", 4096, NULL, 3, NULL);
+    xTaskCreate(bleTask, "bleTask", 4096, NULL, 2, NULL);
 }
 
-void init_mcu() {
+void print_mcu_info() {
     /* Print chip information */
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
@@ -320,7 +250,7 @@ void init_spi() {
     s_dev_config.clock_speed_hz = 8*1000*1000; // 8Mhz SPI
     s_dev_config.mode = 0;
     s_dev_config.spics_io_num = MCP_CS;
-    s_dev_config.queue_size = 1;
+    s_dev_config.queue_size = 10;
     esp_err_t ret_code = spi_bus_initialize(SPI2_HOST, &s_bus_config, SPI_DMA_CH_AUTO);
     if (ret_code != ESP_OK) {
         ESP_LOGE("SPI", "Failed to initialize SPI Bus, Error: %s", esp_err_to_name(ret_code));
@@ -340,7 +270,7 @@ void init_spi() {
 
 void init_can() {
     //Initialize configuration structures using macro initializers
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX /* TX */, CAN_RX /* RX */, TWAI_MODE_LISTEN_ONLY);
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX /* TX */, (gpio_num_t)CAN_RX /* RX */, TWAI_MODE_LISTEN_ONLY);
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     //Install TWAI driver
@@ -406,21 +336,16 @@ void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv) {
     }
     *adc1_mv = adc_sum[0] * (OIL_PRESSURE_R1+OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
     *adc2_mv = adc_sum[1] * (OIL_PRESSURE_R1+OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
-    adcSampleCounter++;
-    if (adcSampleCounter >= 20) {
-        adcSampleCounter = 0;
-        ESP_LOGD("ADC", "Sample, %" PRIi32 " mV %" PRIi32 " mV", *adc1_mv, *adc2_mv);
-        ESP_LOGD("ADC", "ret_num is %" PRIi32 " adc1 count is %" PRIi32 " adc2 count is %" PRIi32, ret_num, adc_read_count[0], adc_read_count[1]);
-    }
+
+#ifdef CANMIM_PRINT_METRICS
+    ADC1_MV = *adc1_mv;
+    ADC2_MV = *adc2_mv;
+#endif
 }
 
-void timer_callback(void* arg) {
-    shouldUpdateADC = true;
-}
 
 void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv) {
     uint8_t pressure = calc_oil_pressure(adc1_mv);
-    uint32_t canFrameRate = canFrameRatePerSec;
     can_frame frame;
     memset(&frame, 0, sizeof(can_frame));
     frame.can_id = OIL_PRESSURE_CAN_ID;
@@ -430,15 +355,12 @@ void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv) {
     frame.data[2] = (adc1_mv >> 8) & 0xFF;
     frame.data[3] = adc2_mv & 0xFF;
     frame.data[4] = (adc2_mv >> 8) & 0xFF;
-    frame.data[5] = canFrameRate & 0xFF;
-    frame.data[6] = (canFrameRate >> 8) & 0xFF;
-    frame.data[7] = (canFrameRate >> 16) & 0xFF;
-    if (xQueueSend(canOutputQueue, &frame, 0) != pdTRUE)
+    if (xQueueSend(canOutputQueue, &frame, 0) != pdTRUE) {
         ESP_LOGE("ADC", "Output CAN Queue Full");
-    if (should_ble_notify) {
-        if (xQueueSend(bleOutputQueue, &frame, 0) != pdTRUE) {
-            ESP_LOGE("ADC", "Output BLE Queue Full");
-        }
+    }
+    
+    if (xQueueSend(bleOutputQueue, &frame, 0) != pdTRUE) {
+        ESP_LOGE("ADC", "Output BLE Queue Full");
     }
 }
 
@@ -448,19 +370,15 @@ void handling_incoming_message() {
     esp_err_t ret_code;
     ret_code = twai_receive(&message, 1);
     switch(ret_code) {
-        case ESP_OK:            
-            canMessageCounter++;
-            if (!IsPassthroughID(&message))
-                break;
+        case ESP_OK:
             if (!(message.rtr)) {
-                // sendTWAIMessageToCan(mcpCan, &message);
+                CAN_IN_COUNT++;
                 frame.can_id = message.identifier;
                 frame.can_dlc = message.data_length_code;
                 memcpy(frame.data, message.data, 8);
-                xQueueSend(canOutputQueue, &frame, 0);
-                if (should_ble_notify) {
-                    xQueueSend(bleOutputQueue, &frame, 0);
-                }
+                if (can_isolation)
+                    xQueueSend(canOutputQueue, &frame, 0);
+                xQueueSend(bleOutputQueue, &frame, 0);
             }
             break;
         case ESP_ERR_TIMEOUT:
@@ -483,7 +401,6 @@ void set_led() {
 
 void incomingCANTask(void * pvParameter) {
     // Start ADC measurement.
-    canMessageBeginTime = esp_timer_get_time();
     ESP_ERROR_CHECK(adc_continuous_start(adc1_cont_handle));
 
     for(;;) {
@@ -494,452 +411,94 @@ void incomingCANTask(void * pvParameter) {
             send_adc_data_to_can(adc1_mv, adc2_mv);
         }
         handling_incoming_message();
-        if (canMessageCounter >= 3000) {
-            int64_t currentTime = esp_timer_get_time();
-            canMessageCounter *= 1000000;
-            canFrameRatePerSec = canMessageCounter / (currentTime - canMessageBeginTime);
-            canMessageBeginTime = currentTime;
-            canMessageCounter = 0;
-            ESP_LOGD("CAN", "CAN FRAME RATE %" PRIi32, canFrameRatePerSec);
-        }
     }
 }
 
 void outgoingCANTask(void * pvParameter) {
-    MCP2515 mcpCan(&spi_mcp2515);
-    printf("Created MCP2515 object\n");
-    mcpCan.reset();
-    printf("Reset MCP2515 \n");
-    mcpCan.setBitrate(CAN_500KBPS, MCP_8MHZ);
-    printf("Set bitrate MCP2515 \n");
-    mcpCan.setOneShotMode(true);
-    printf("Set OneShot MCP2515 \n");
-    mcpCan.setNormalMode();
-    printf("Set Normal mode MCP2515 \n");
+    MCP2515* mcpCan = nullptr;
+    if (can_isolation) {
+        mcpCan = new MCP2515(&spi_mcp2515);
+        printf("Created MCP2515 object\n");
+        mcpCan->reset();
+        printf("Reset MCP2515 \n");
+        mcpCan->setBitrate(CAN_500KBPS, MCP_8MHZ);
+        printf("Set bitrate MCP2515 \n");
+        mcpCan->setNormalMode();
+        printf("Set Normal mode MCP2515 \n");
+        MCP2515::ERROR err = mcpCan->setOneShotMode(true);
+        if (err != MCP2515::ERROR_OK) {
+            ESP_LOGE("MCP2515", "Failed to set One Shot Mode");
+        } else {
+            ESP_LOGI("MCP2515", "Set One Shot Mode");
+        }
+    }
     can_frame frame;
     for(;;) {
         if (xQueueReceive(canOutputQueue, &frame, portMAX_DELAY) == pdTRUE) {
-            MCP2515::ERROR err = mcpCan.sendMessage(&frame);
-            if (err != MCP2515::ERROR_OK) {
-                //ESP_LOGE("MCPCAN", "Failed sending to CAN %d", err);
+            if (uxQueueMessagesWaiting(canOutputQueue) > 25) {
+                for (int i = 0; i < 10; i++) {
+                    xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY);
+                }
+                ESP_LOGI("MCPCAN", "Skipped 10 messages");
+            }
+
+            if (can_isolation) {
+                CAN_OUT_COUNT++;
+                int64_t begin = esp_timer_get_time();
+                MCP2515::ERROR err = mcpCan->sendMessageSkipStatus(&frame);
+                int64_t end = esp_timer_get_time();
+                MCP_TIMER = (end - begin);
+                if (err != MCP2515::ERROR_OK) {
+                    ESP_LOGE("MCPCAN", "Failed sending to CAN %d", err);
+                    if (err == MCP2515::ERROR_ALLTXBUSY) {
+                        ESP_LOGE("MCPCAN", "Failed sending to CAN, All TX busy");
+                    }
+                }
+            } else {
+                twai_message_t message;
+                memset(&message, 0, sizeof(message));
+                message.identifier = frame.can_id;
+                message.data_length_code = frame.can_dlc;
+                memcpy(message.data, frame.data, 8);
+                esp_err_t ret_code = twai_transmit(&message, 1);
+                if (ret_code != ESP_OK)
+                     ESP_LOGE("ESPCAN", "Failed when transmitting due to %s", esp_err_to_name(ret_code));
             }
         }
     }
-}
-
-/**
- * Logs information about a connection to the console.
- */
-void ble_print_conn_desc(struct ble_gap_conn_desc *desc) {
-    MODLOG_DFLT(INFO, "handle=%d our_ota_addr_type=%d our_ota_addr=",
-                desc->conn_handle, desc->our_ota_addr.type);
-    print_addr(desc->our_ota_addr.val);
-    MODLOG_DFLT(INFO, " our_id_addr_type=%d our_id_addr=",
-                desc->our_id_addr.type);
-    print_addr(desc->our_id_addr.val);
-    MODLOG_DFLT(INFO, " peer_ota_addr_type=%d peer_ota_addr=",
-                desc->peer_ota_addr.type);
-    print_addr(desc->peer_ota_addr.val);
-    MODLOG_DFLT(INFO, " peer_id_addr_type=%d peer_id_addr=",
-                desc->peer_id_addr.type);
-    print_addr(desc->peer_id_addr.val);
-    MODLOG_DFLT(INFO, " conn_itvl=%d conn_latency=%d supervision_timeout=%d "
-                "encrypted=%d authenticated=%d bonded=%d\n",
-                desc->conn_itvl, desc->conn_latency,
-                desc->supervision_timeout,
-                desc->sec_state.encrypted,
-                desc->sec_state.authenticated,
-                desc->sec_state.bonded);
-}
-
-void ble_server_on_reset(int reason) {
-    MODLOG_DFLT(ERROR, "Resetting state; reason=%d\n", reason);
-}
-
-int ble_server_gap_event(struct ble_gap_event *event, void *arg) {
-    struct ble_gap_conn_desc desc;
-    int rc;
-    switch(event->type) {
-    case BLE_GAP_EVENT_CONNECT:
-        /* A new connection was established or a connection attempt failed. */
-        MODLOG_DFLT(INFO, "connection %s; status=%d ",
-                    event->connect.status == 0 ? "established" : "failed",
-                    event->connect.status);
-        if (event->connect.status == 0) {
-            rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
-            assert(rc == 0);
-            ble_print_conn_desc(&desc);
-            // Save connection handle
-            connection_handle[0] = event->connect.conn_handle;
-        }
-        if (event->connect.status != 0) {
-            /* Connection failed; resume advertising. */
-            ble_server_advertise();
-        }
-        return 0;
-    
-    case BLE_GAP_EVENT_DISCONNECT:
-        MODLOG_DFLT(INFO, "disconnect; reason=%d ", event->disconnect.reason);
-        ble_print_conn_desc(&event->disconnect.conn);
-        MODLOG_DFLT(INFO, "\n");
-        ble_server_advertise();
-        return 0;
-
-    case BLE_GAP_EVENT_ADV_COMPLETE:
-        MODLOG_DFLT(INFO, "advertise complete; reason=%d",
-                    event->adv_complete.reason);
-        ble_server_advertise();
-        return 0;
-    
-    case BLE_GAP_EVENT_CONN_UPDATE:
-        DFLT_LOG_INFO("connection updated; status=%d ",
-                    event->conn_update.status);
-        rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
-        assert(rc == 0);
-        ble_print_conn_desc(&desc);
-        DFLT_LOG_INFO("\n");
-        return 0;
-
-    case BLE_GAP_EVENT_ENC_CHANGE:
-        /* Encryption has been enabled or disabled for this connection. */
-        DFLT_LOG_INFO("encryption change event; status=%d ",
-                    event->enc_change.status);
-        rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
-        assert(rc == 0);
-        ble_print_conn_desc(&desc);
-        DFLT_LOG_INFO("\n");
-        return 0;
-    
-    case BLE_GAP_EVENT_SUBSCRIBE:
-        DFLT_LOG_INFO("subscribe event; conn_handle=%d attr_handle=%d "
-                          "reason=%d prevn=%d curn=%d previ=%d curi=%d\n",
-                    event->subscribe.conn_handle,
-                    event->subscribe.attr_handle,
-                    event->subscribe.reason,
-                    event->subscribe.prev_notify,
-                    event->subscribe.cur_notify,
-                    event->subscribe.prev_indicate,
-                    event->subscribe.cur_indicate);
-        if (event->subscribe.cur_notify) {
-            should_ble_notify = true;
-        } else {
-            should_ble_notify = false;
-        }
-        
-        return 0;
-
-    case BLE_GAP_EVENT_MTU:
-        DFLT_LOG_INFO("mtu update event; conn_handle=%d cid=%d mtu=%d\n",
-                    event->mtu.conn_handle,
-                    event->mtu.channel_id,
-                    event->mtu.value);
-        return 0;
-    }
-
-    return 0;
-}
-
-void ble_server_advertise(void)
-{
-    struct ble_gap_adv_params adv_params;
-    struct ble_hs_adv_fields fields;
-    const char *name;
-    int rc;
-
-    if(ble_gap_adv_active())
-        return;
-
-    /**
-     *  Set the advertisement data included in our advertisements:
-     *     o Flags (indicates advertisement type and other general info).
-     *     o Advertising tx power.
-     *     o Device name.
-     *     o 16-bit service UUIDs (alert notifications).
-     */
-
-    memset(&fields, 0, sizeof fields);
-
-    /* Advertise two flags:
-     *     o Discoverability in forthcoming advertisement (general)
-     *     o BLE-only (BR/EDR unsupported).
-     */
-    fields.flags = BLE_HS_ADV_F_DISC_GEN |
-                   BLE_HS_ADV_F_BREDR_UNSUP;
-
-    /* Indicate that the TX power level field should be included; have the
-     * stack fill this value automatically.  This is done by assigning the
-     * special value BLE_HS_ADV_TX_PWR_LVL_AUTO.
-     */
-    fields.tx_pwr_lvl_is_present = 1;
-    fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
-
-    name = ble_svc_gap_device_name();
-    fields.name = (uint8_t *)name;
-    fields.name_len = strlen(name);
-    fields.name_is_complete = 1;
-
-    fields.uuids16 = fields_uuid;
-    fields.num_uuids16 = 1;
-    fields.uuids16_is_complete = 1;
-
-    rc = ble_gap_adv_set_fields(&fields);
-    if (rc != 0) {
-        MODLOG_DFLT(ERROR, "error setting advertisement data; rc=%d\n", rc);
-        return;
-    }
-
-    /* Begin advertising. */
-    memset(&adv_params, 0, sizeof adv_params);
-    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
-    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    rc = ble_gap_adv_start(own_addr_type, NULL, BLE_HS_FOREVER,
-                           &adv_params, ble_server_gap_event, NULL);
-    if (rc != 0) {
-        MODLOG_DFLT(ERROR, "error enabling advertisement; rc=%d\n", rc);
-        return;
-    }
-}
-
-void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg)
-{
-    char buf[BLE_UUID_STR_LEN];
-
-    switch (ctxt->op) {
-    case BLE_GATT_REGISTER_OP_SVC:
-        MODLOG_DFLT(DEBUG, "registered service %s with handle=%d\n",
-                    ble_uuid_to_str(ctxt->svc.svc_def->uuid, buf),
-                    ctxt->svc.handle);
-        break;
-
-    case BLE_GATT_REGISTER_OP_CHR:
-        MODLOG_DFLT(DEBUG, "registering characteristic %s with "
-                    "def_handle=%d val_handle=%d\n",
-                    ble_uuid_to_str(ctxt->chr.chr_def->uuid, buf),
-                    ctxt->chr.def_handle,
-                    ctxt->chr.val_handle);
-        break;
-
-    case BLE_GATT_REGISTER_OP_DSC:
-        MODLOG_DFLT(DEBUG, "registering descriptor %s with handle=%d\n",
-                    ble_uuid_to_str(ctxt->dsc.dsc_def->uuid, buf),
-                    ctxt->dsc.handle);
-        break;
-
-    default:
-        assert(0);
-        break;
-    }
-}
-
-void print_addr(uint8_t addr[]) {
-    for (int i = 0; i < 6; i++) {
-        printf("%x", addr[i]);
-        if (i != 5)
-            printf(":");
-    }
-}
-
-// void ble_store_config_init(void);
-
-void ble_server_on_sync(void)
-{
-    int rc;
-
-    rc = ble_hs_util_ensure_addr(0);
-    assert(rc == 0);
-
-    /* Figure out address to use while advertising (no privacy for now) */
-    rc = ble_hs_id_infer_auto(0, &own_addr_type);
-    if (rc != 0) {
-        MODLOG_DFLT(ERROR, "error determining address type; rc=%d\n", rc);
-        return;
-    }
-
-    /* Printing ADDR */
-    uint8_t addr_val[6] = {0};
-    rc = ble_hs_id_copy_addr(own_addr_type, addr_val, NULL);
-
-    MODLOG_DFLT(INFO, "Device Address: ");
-    //print_addr(addr_val);
-    MODLOG_DFLT(INFO, "\n");
-    /* Begin advertising. */
-    ble_server_advertise();
-}
-
-int gatt_svr_init(void)
-{
-    int rc = 0;
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-
-    rc = ble_gatts_count_cfg(new_ble_svc_gatt_defs);
-
-    if (rc != 0) {
-        return rc;
-    }
-
-    rc = ble_gatts_add_svcs(new_ble_svc_gatt_defs);
-    if (rc != 0) {
-        return rc;
-    }
-
-    return 0;
-}
-
-void ble_server_host_task(void *param)
-{
-    ESP_LOGI("MCU", "BLE Host Task Started");
-    /* This function will return only when nimble_port_stop() is executed */
-    nimble_port_run();
-
-    nimble_port_freertos_deinit();
-}
-
-/* Callback function for custom service */
-int ble_svc_gatt_handler(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
-    const ble_uuid_t *uuid;
-    int rc;
-    switch (ctxt->op) {
-    case BLE_GATT_ACCESS_OP_READ_CHR:
-        if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-            MODLOG_DFLT(INFO, "Characteristic read; conn_handle=%d attr_handle=%d\n",
-                        conn_handle, attr_handle);
-        } else {
-            MODLOG_DFLT(INFO, "Characteristic read by NimBLE stack; attr_handle=%d\n",
-                        attr_handle);
-        }
-        uuid = ctxt->chr->uuid;
-        if (attr_handle == ble_svc_gatt_read_val_handle) {
-            rc = os_mbuf_append(ctxt->om,
-                                &gatt_svr_chr_val,
-                                sizeof(gatt_svr_chr_val));
-            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-        }
-        break;
-
-
-    case BLE_GATT_ACCESS_OP_WRITE_CHR:
-        if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-            MODLOG_DFLT(INFO, "Characteristic write; conn_handle=%d attr_handle=%d",
-                        conn_handle, attr_handle);
-        } else {
-            MODLOG_DFLT(INFO, "Characteristic write by NimBLE stack; attr_handle=%d",
-                        attr_handle);
-        }
-        uuid = ctxt->chr->uuid;
-        if (attr_handle == ble_svc_gatt_read_val_handle) {
-            rc = gatt_svr_write(ctxt->om,
-                                sizeof(gatt_svr_chr_val),
-                                sizeof(gatt_svr_chr_val),
-                                &gatt_svr_chr_val, NULL);
-            ble_gatts_chr_updated(attr_handle);
-            MODLOG_DFLT(INFO, "Notification/Indication scheduled for "
-                        "all subscribed peers.\n");
-            return rc;
-        }
-        break;
-    
-    case BLE_GATT_ACCESS_OP_READ_DSC:
-        if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-            MODLOG_DFLT(INFO, "Descriptor read; conn_handle=%d attr_handle=%d\n",
-                        conn_handle, attr_handle);
-        } else {
-            MODLOG_DFLT(INFO, "Descriptor read by NimBLE stack; attr_handle=%d\n",
-                        attr_handle);
-        }
-        uuid = ctxt->dsc->uuid;
-        //if (ble_uuid_cmp(uuid, ble_srv_uuid) == 0) {
-            rc = os_mbuf_append(ctxt->om,
-                                &gatt_svr_dsc_val,
-                                sizeof(gatt_svr_dsc_val));
-            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-        //}
-        break;
-    default:
-        ESP_LOGI("BLE", "\nDefault Callback");
-        break;
-    }
-    return 0;
-}
-
-int gatt_svr_write(struct os_mbuf *om, uint16_t min_len, uint16_t max_len,
-               void *dst, uint16_t *len) {
-    uint16_t om_len;
-    int rc;
-
-    om_len = OS_MBUF_PKTLEN(om);
-    if (om_len < min_len || om_len > max_len) {
-        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-    }
-
-    rc = ble_hs_mbuf_to_flat(om, dst, max_len, len);
-    if (rc != 0) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
-
-    return 0;
 }
 
 void bleTask(void *pvParameter) {
-    int rc;
-    nimble_port_init();
-
-    /* Initialize connection_handle array */
-    for (int i = 0; i <= CONFIG_BT_NIMBLE_MAX_CONNECTIONS; i++) {
-        connection_handle[i] = -1;
-    }
-
-    ble_hs_cfg.reset_cb = ble_server_on_reset;
-    ble_hs_cfg.sync_cb = ble_server_on_sync;
-    ble_hs_cfg.gatts_register_cb = gatt_svr_register_cb;
-    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
-    ble_hs_cfg.sm_io_cap = 3;
-#ifdef CONFIG_EXAMPLE_BONDING
-    ble_hs_cfg.sm_bonding = 1;
-#endif
-#ifdef CONFIG_EXAMPLE_MITM
-    ble_hs_cfg.sm_mitm = 1;
-#endif
-#ifdef CONFIG_EXAMPLE_USE_SC
-    ble_hs_cfg.sm_sc = 1;
-#else
-    ble_hs_cfg.sm_sc = 0;
-#endif
-#ifdef CONFIG_EXAMPLE_BONDING
-    ble_hs_cfg.sm_our_key_dist = 1;
-    ble_hs_cfg.sm_their_key_dist = 1;
-#endif
-    /* Register custom service */
-    rc = gatt_svr_init();
-    assert(rc == 0);
-    /* Set the default device name. */
-    rc = ble_svc_gap_device_name_set("nimble-ble-svr");
-    assert(rc == 0);
-    gatt_svr_dsc_val = 0x99;
-
-    /* XXX Need to have template for store */
-    //ble_store_config_init();
-
-    nimble_port_freertos_init(ble_server_host_task);
-
+    ble_init();
     can_frame frame;
-    for (;;) {
-        if (xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY)) {
-            if (should_ble_notify) {
-                struct os_mbuf * txom;
-                txom = ble_hs_mbuf_from_flat(&frame, sizeof(frame));
-                if (txom == NULL) {
-                    ESP_LOGW("BLE", "txom is NULL");
-                    continue;
+    uint8_t ble_can_frame[16];
+    size_t ble_can_len = 0;
+    int skipped_messages = 0;
+    while(1) {
+        if (xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY) == pdTRUE) {
+            skipped_messages = 0;
+            if (uxQueueMessagesWaiting(bleOutputQueue) > 25) {
+                for (int i = 0; i < 10; i++) {
+                    xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY);
                 }
-                rc = ble_gatts_notify_custom(connection_handle[0],
-                                            ble_svc_gatt_read_val_handle,
-                                            txom);
-                if (rc != 0) {
-                    ESP_LOGW("BLE", "Error in sending notification rc = %d", rc);
-                }
-                //os_mbuf_free_chain(txom);
+                ESP_LOGI("BLE", "10 message skipped.");
             }
-        }
+            ble_can_len = frame.can_dlc + 4;            
+            frame.can_id &= 0x1FFFFFFF;
+            memcpy(ble_can_frame, &frame.can_id, 4);
+            memcpy(ble_can_frame+4, frame.data, frame.can_dlc);
+            BLE_OUT_COUNT++;
+            if (ble_notify(ble_can_frame, ble_can_len)) {
+                BLE_NOTIFIED_COUNT++;
+            }
+        }        
     }
 }
+
+
+
+
+
+
+
+

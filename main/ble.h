@@ -1,35 +1,27 @@
-#include "nimble/nimble_port.h"
-#include "nimble/nimble_port_freertos.h"
-#include "esp_nimble_hci.h"
-#include "nimble/ble.h"
-#include "host/ble_hs.h"
-#include "modlog/modlog.h"
-#include "host/util/util.h"
-#include "services/gap/ble_svc_gap.h"
-#include "services/gatt/ble_svc_gatt.h"
 
-void print_addr(uint8_t addr[]);
+#ifndef CANMIM_BLE_H
+#define CANMIM_BLE_H
 
-void ble_server_on_reset(int reason);
 
-static void ble_server_advertise(void);
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "esp_system.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_bt.h"
+#include <esp_gap_ble_api.h>
+#include <esp_gatts_api.h>
+#include <esp_bt_defs.h>
+#include <esp_bt_main.h>
+#include <esp_gatt_common_api.h>
 
-void ble_print_conn_desc(struct ble_gap_conn_desc *desc);
 
-void ble_server_on_reset(int reason);
+void ble_init();
 
-int ble_server_gap_event(struct ble_gap_event *event, void *arg);
+bool ble_notify(void * data, size_t len);
 
-void ble_server_advertise(void);
-
-void gatt_svr_register_cb(struct ble_gatt_register_ctxt *ctxt, void *arg);
-
-void ble_server_on_sync(void);
-
-int gatt_svr_init(void);
-
-void ble_server_host_task(void *param);
-
-int ble_svc_gatt_handler(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
-
-int gatt_svr_write(struct os_mbuf *om, uint16_t min_len, uint16_t max_len, void *dst, uint16_t *len);
+#endif
