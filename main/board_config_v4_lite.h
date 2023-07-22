@@ -2,19 +2,19 @@
 #define _BOARD_CONFIG_H_
 
 // SPI PIN Map
-#define MCP_SCK   7
-#define MCP_MOSI 10
-#define MCP_MISO  8
-#define MCP_CS    9
-#define MCP_INT   6
+#define MCP_SCK   -1
+#define MCP_MOSI  -1
+#define MCP_MISO  -1
+#define MCP_CS    -1
+#define MCP_INT   -1
 
 // Isolation Control PIN
-// #define ISO_PIN   5
-#define ISO_OVERRIDE 1
+#define ISO_PIN   5
+// #define ISO_OVERRIDE 1
 
 // CAN Controller PIN Map
-#define CAN_TX    3
-#define CAN_RX    2
+#define CAN_TX    7
+#define CAN_RX    6
 
 // LED PIN Map
 #define LED_PIN   4
@@ -24,7 +24,7 @@
 
 // Resistors value in kOhm for the voltage divider.
 #define OIL_PRESSURE_R1 10
-#define OIL_PRESSURE_R2 50
+#define OIL_PRESSURE_R2 20
 
 // Characteristics of the oil pressure sensor.
 // Voltage in mV.

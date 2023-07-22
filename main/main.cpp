@@ -1,5 +1,6 @@
 #include "sdkconfig.h"
 #include "board_config.h"
+#include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -13,14 +14,21 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "driver/twai.h"
-
-#include "mcp2515.h"
-#include "led_strip.h"
-#include "ble.h"
 #include "driver/rmt.h"
 
 #include <stdio.h>
 #include <string.h>
+
+#include "canmim.h"
+#include "mcp2515.h"
+#include "led_strip.h"
+#include "ble.h"
+
+
+#define LOG_CAN_TAG "CAN"
+#define LOG_MCU_TAG "MCU"
+#define LOG_CAN_SPI_TAG "SPI CAN"
+#define LOG_BLE_TAG "BLE"
 
 #define ADC_FRAME_SIZE 4 * 100
 
@@ -47,13 +55,17 @@ volatile uint32_t ADC2_MV = 0;
 
 #endif
 
-bool can_isolation = true;
+bool can_isolation = false;
+
+void gpio_init();
 
 void incomingCANTask(void * pvParameter);
 
 void outgoingCANTask(void * pvParameter);
 
 void bleTask(void *pvParameter);
+
+void set_ble_name_from_mac();
 
 // Helper function to cause system reboot when fatal error happens.
 void fatal_error();
@@ -99,6 +111,7 @@ static void tick_timer_cb(void *arg) {
     ESP_LOGI("TIMER", "ble_notified_count: %zu", ble_notified_count);
     ESP_LOGI("TIMER", "MCP_TIMER: %zu microsec", (size_t)mcp_timer);
     ESP_LOGI("TIMER", "Sample, %" PRIi32 " mV %" PRIi32 " mV", ADC1_MV, ADC2_MV);
+    ESP_LOGI("TIMER", "");
     CAN_IN_COUNT = 0;
     CAN_OUT_COUNT = 0;
     BLE_OUT_COUNT = 0;
@@ -109,19 +122,22 @@ static void tick_timer_cb(void *arg) {
 #endif
 
 extern "C" void app_main(void) {
-    // Set MCP2525 interrupt pin to float as we don't use it
-    // for now.
-    gpio_set_pull_mode((gpio_num_t)MCP_INT, GPIO_FLOATING);
+    gpio_init();
     print_mcu_info();
+    if (can_isolation)
+        ESP_LOGI(LOG_CAN_TAG, "CAN isolation: enabled");
+    else
+        ESP_LOGI(LOG_CAN_TAG, "CAN isolation: disabled");
     init_can();
     if (can_isolation) {
         init_spi();
+        ESP_LOGI(LOG_MCU_TAG, "SPI Init");
         printf("SPI Init\n");
     }
     init_adc();
-    printf("ADC Init\n");
+    ESP_LOGI(LOG_MCU_TAG, "ADC Init");
     set_led();
-    printf("LED Init\n");
+    ESP_LOGI(LOG_MCU_TAG, "LED Init");
 
     // Init NVS, which is used by WiFi and BLE stack.
     esp_err_t ret = nvs_flash_init();
@@ -130,7 +146,7 @@ extern "C" void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
+    set_ble_name_from_mac();
 #ifdef CANMIM_PRINT_METRICS
     const esp_timer_create_args_t tick_timer_args = {
         .callback = &tick_timer_cb,
@@ -145,12 +161,61 @@ extern "C" void app_main(void) {
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, 1000000));
 #endif
 
-    canOutputQueue = xQueueCreate(50, sizeof(can_frame));
-    bleOutputQueue = xQueueCreate(50, sizeof(can_frame));
+    canOutputQueue = xQueueCreate(50, sizeof(can_frame_t));
+    bleOutputQueue = xQueueCreate(50, sizeof(can_frame_t));
 
     xTaskCreate(incomingCANTask, "incomingCANTask", 4096, NULL, 1, NULL);
     xTaskCreate(outgoingCANTask, "outgoingCANTask", 4096, NULL, 3, NULL);
     xTaskCreate(bleTask, "bleTask", 4096, NULL, 2, NULL);
+}
+
+void set_ble_name_from_mac() {
+    uint8_t ble_mac[8];
+    memset(ble_mac, 0, sizeof(ble_mac));
+    esp_err_t ret = esp_read_mac(ble_mac, ESP_MAC_BT);
+    if (ret != ESP_OK) {
+        ESP_LOGE(LOG_MCU_TAG, "Failed to retrieve BLE MAC address: %d", ret);
+    }
+    char ble_name[32];
+    memset(ble_name, 0, sizeof(ble_name));
+    size_t ble_name_len = strlen(BLE_DEVICE_NAME_BASE);
+    if (ble_name_len > sizeof(ble_name)-4)
+        ble_name_len = sizeof(ble_name)-4;
+    memcpy(ble_name, BLE_DEVICE_NAME_BASE, ble_name_len);
+    int ble_num = ble_mac[4] + ble_mac[5];
+    ble_num = ble_num * 2621 %100;
+    int char_count = sprintf(ble_name + ble_name_len, "%d", ble_num);
+    ble_name_len += char_count;
+    ble_name[ble_name_len] = 0;
+    set_ble_name(ble_name, ble_name_len);
+    ESP_LOGI(LOG_BLE_TAG, "BLE Device name: %s", ble_name);
+}
+
+void gpio_init() {
+    // Set MCP2525 interrupt pin to float as we don't use it
+    // for now.
+    if (MCP_INT != -1)
+        gpio_set_pull_mode((gpio_num_t)MCP_INT, GPIO_FLOATING);
+    #ifndef ISO_OVERRIDE
+    if (ISO_PIN != -1) {
+        esp_err_t err = gpio_set_direction((gpio_num_t)ISO_PIN, GPIO_MODE_INPUT_OUTPUT);
+        if (err != ESP_OK) {
+            ESP_LOGE("GPIO", "ISO Pin failed to set to I/O mode, error code: %d", err);
+        }
+        err = gpio_set_pull_mode((gpio_num_t)ISO_PIN, GPIO_PULLUP_ONLY);
+        if (err != ESP_OK) {
+            ESP_LOGE("GPIO", "ISO Pin failed to set to Pull Up, error code: %d", err);
+        }
+        vTaskDelay(50/portTICK_PERIOD_MS);
+        int level = gpio_get_level((gpio_num_t)ISO_PIN);
+        if (level)
+            can_isolation = true;
+        else
+            can_isolation = false;
+    }
+    #else
+    can_isolation = ISO_OVERRIDE;
+    #endif
 }
 
 void print_mcu_info() {
@@ -270,7 +335,10 @@ void init_spi() {
 
 void init_can() {
     //Initialize configuration structures using macro initializers
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX /* TX */, (gpio_num_t)CAN_RX /* RX */, TWAI_MODE_LISTEN_ONLY);
+    twai_mode_t mode = TWAI_MODE_LISTEN_ONLY;
+    if (!can_isolation)
+        mode = TWAI_MODE_NO_ACK;
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)CAN_TX /* TX */, (gpio_num_t)CAN_RX /* RX */, mode);
     twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
     //Install TWAI driver
@@ -346,8 +414,9 @@ void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv) {
 
 void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv) {
     uint8_t pressure = calc_oil_pressure(adc1_mv);
-    can_frame frame;
-    memset(&frame, 0, sizeof(can_frame));
+    can_frame_t frame;
+    memset(&frame, 0, sizeof(can_frame_t));
+    frame.timestamp = esp_timer_get_time() / 1000;
     frame.can_id = OIL_PRESSURE_CAN_ID;
     frame.can_dlc = 8;
     frame.data[0] = pressure;
@@ -366,12 +435,13 @@ void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv) {
 
 void handling_incoming_message() {
     twai_message_t message;
-    can_frame frame;
+    can_frame_t frame;
     esp_err_t ret_code;
     ret_code = twai_receive(&message, 1);
     switch(ret_code) {
         case ESP_OK:
             if (!(message.rtr)) {
+                frame.timestamp = esp_timer_get_time()/1000;
                 CAN_IN_COUNT++;
                 frame.can_id = message.identifier;
                 frame.can_dlc = message.data_length_code;
@@ -432,9 +502,11 @@ void outgoingCANTask(void * pvParameter) {
             ESP_LOGI("MCP2515", "Set One Shot Mode");
         }
     }
-    can_frame frame;
+    can_frame_t frame;
     for(;;) {
         if (xQueueReceive(canOutputQueue, &frame, portMAX_DELAY) == pdTRUE) {
+            // Unlikely to happen. If Output CAN is congested, drop a few CAN
+            // frames to avoid buffer overfill.
             if (uxQueueMessagesWaiting(canOutputQueue) > 25) {
                 for (int i = 0; i < 10; i++) {
                     xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY);
@@ -444,8 +516,12 @@ void outgoingCANTask(void * pvParameter) {
 
             if (can_isolation) {
                 CAN_OUT_COUNT++;
+                can_frame mcp_frame;
+                mcp_frame.can_id = frame.can_id;
+                mcp_frame.can_dlc = frame.can_dlc;
+                memcpy(mcp_frame.data, frame.data, CAN_MAX_DATALEN);
                 int64_t begin = esp_timer_get_time();
-                MCP2515::ERROR err = mcpCan->sendMessageSkipStatus(&frame);
+                MCP2515::ERROR err = mcpCan->sendMessageSkipStatus(&mcp_frame);
                 int64_t end = esp_timer_get_time();
                 MCP_TIMER = (end - begin);
                 if (err != MCP2515::ERROR_OK) {
@@ -470,25 +546,17 @@ void outgoingCANTask(void * pvParameter) {
 
 void bleTask(void *pvParameter) {
     ble_init();
-    can_frame frame;
-    uint8_t ble_can_frame[16];
-    size_t ble_can_len = 0;
-    int skipped_messages = 0;
+    can_frame_t frame;
     while(1) {
         if (xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY) == pdTRUE) {
-            skipped_messages = 0;
             if (uxQueueMessagesWaiting(bleOutputQueue) > 25) {
                 for (int i = 0; i < 10; i++) {
                     xQueueReceive(bleOutputQueue, &frame, portMAX_DELAY);
                 }
                 ESP_LOGI("BLE", "10 message skipped.");
             }
-            ble_can_len = frame.can_dlc + 4;            
-            frame.can_id &= 0x1FFFFFFF;
-            memcpy(ble_can_frame, &frame.can_id, 4);
-            memcpy(ble_can_frame+4, frame.data, frame.can_dlc);
             BLE_OUT_COUNT++;
-            if (ble_notify(ble_can_frame, ble_can_len)) {
+            if (ble_notify(&frame)) {
                 BLE_NOTIFIED_COUNT++;
             }
         }        

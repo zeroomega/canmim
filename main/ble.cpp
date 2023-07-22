@@ -1,6 +1,8 @@
 #include "ble.h"
 #include "freertos/semphr.h"
 
+#include <map>
+
 #define GATTS_TAG "BLE"
 
 ///Declare the static function
@@ -12,11 +14,13 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 #define GATTS_CHAR_UUID_CAN_FILTER  0x0002
 #define GATTS_NUM_HANDLE_TEST_A     6
 
-#define BLE_DEVICE_NAME_STR            "ESP_CAN_BLE"
+#define DEFAULT_BLE_DEVICE_NAME_STR         "ESPCAN"
 
 #define GATTS_DEMO_CHAR_VAL_LEN_MAX 0x40
 
 #define PREPARE_BUF_MAX_SIZE 1024
+
+static char ble_device_name[32];
 
 static uint8_t rc_can_main_str[] = {0x11,0x22,0x33};
 static esp_gatt_char_prop_t rc_can_main_property = 0;
@@ -140,19 +144,20 @@ typedef struct {
 
 static prepare_type_env_t a_prepare_write_env;
 
-uint8_t can_frame[32];
-size_t can_frame_len;
+uint8_t rc_read_can_frame[32];
+size_t rc_read_can_frame_len;
 SemaphoreHandle_t can_data_lock;
 
-volatile bool should_notify = false;
+volatile bool rc_should_notify = false;
 volatile uint16_t notify_char_handle;
 volatile uint16_t notify_conn_id;
 volatile esp_gatt_if_t notify_gatt_if;
 
-#define CAN_ALLOW_LIST_MAX_LENGTH 256
 bool can_allow_list_enabled = false;
-uint32_t can_allow_list[CAN_ALLOW_LIST_MAX_LENGTH];
-size_t can_allow_list_index;
+uint32_t rc_can_global_interval = 0;
+
+std::map<uint32_t, uint32_t> can_allow_list;
+std::map<uint32_t, uint32_t> can_timestamp_history;
 
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
@@ -265,7 +270,10 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         rc_can_profile.service_id.id.uuid.len = ESP_UUID_LEN_16;
         rc_can_profile.service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_CAN;
 
-        esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(BLE_DEVICE_NAME_STR);
+        if (strlen(ble_device_name) == 0) {
+            strcpy(ble_device_name, DEFAULT_BLE_DEVICE_NAME_STR);
+        }
+        esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(ble_device_name);
         if (set_dev_name_ret){
             ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
         }
@@ -291,8 +299,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));        
         rsp.attr_value.handle = param->read.handle;
         if (xSemaphoreTake(can_data_lock, 1) == pdTRUE) {
-            rsp.attr_value.len = can_frame_len;
-            memcpy(rsp.attr_value.value, can_frame, can_frame_len);
+            rsp.attr_value.len = rc_read_can_frame_len;
+            memcpy(rsp.attr_value.value, rc_read_can_frame, rc_read_can_frame_len);
             xSemaphoreGive(can_data_lock);
         }
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
@@ -313,7 +321,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                         notify_char_handle = rc_can_profile.char_handle;
                         notify_conn_id = param->write.conn_id;
                         notify_gatt_if = gatts_if;
-                        should_notify = true;
+                        rc_should_notify = true;
                     }
                 }else if (descr_value == 0x0002){
                     if (rc_can_main_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -321,11 +329,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                         notify_char_handle = rc_can_profile.char_handle;
                         notify_conn_id = param->write.conn_id;
                         notify_gatt_if = gatts_if;
-                        should_notify = true;
+                        rc_should_notify = true;
                     }
                 }
                 else if (descr_value == 0x0000){
-                    should_notify = false;
+                    rc_should_notify = false;
                     ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
                 }else{
                     ESP_LOGE(GATTS_TAG, "unknown descr value");
@@ -338,15 +346,21 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 switch(cmd) {
                 case 0:{ //deny all
                     can_allow_list_enabled = true;
+                    can_allow_list.clear();
                     ESP_LOGI(GATTS_TAG, "CAN Filter, Deny All");
                     break;
                 }
                 case 1:{ // allow all
                     can_allow_list_enabled = false;
-                    can_allow_list_index = 0;
-                    memset(can_allow_list, 0, sizeof(uint32_t)*CAN_ALLOW_LIST_MAX_LENGTH);
-                    // ignore update interval advice.
-                    ESP_LOGI(GATTS_TAG, "CAN Filter, Allow All");
+                    can_allow_list.clear();
+                    if (param->write.len < 3) {
+                        ESP_LOGI(GATTS_TAG, "CAN Filter, Allow All");
+                        break;
+                    }
+                    uint8_t *buffer = param->write.value;
+                    uint32_t interval = buffer[1] << 8 | buffer[2];
+                    ESP_LOGI(GATTS_TAG, "CAN Filter, Allow All with interval %" PRIi32 " ms", interval);
+                    rc_can_global_interval = interval;
                     break;
                 }
                 case 2:{ // allow one CAN ID
@@ -357,10 +371,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                     // CAN_ID from buffer is big endian
                     uint8_t *buffer = param->write.value;
                     uint32_t can_id = buffer[3] << 24 | buffer[4] << 16 | buffer[5] << 8 | buffer[6];
-                    // ignore update interval advice
-                    can_allow_list[can_allow_list_index] = can_id;
-                    can_allow_list_index++;
-                    ESP_LOGI(GATTS_TAG, "CAN Filter, Allow %x", (unsigned int)can_id);
+                    uint32_t interval = buffer[1] << 8 | buffer[2];
+                    can_allow_list[can_id] = interval;
+                    ESP_LOGI(GATTS_TAG, "CAN Filter, Allow %x with interval %" PRIi32 " ms", (unsigned int)can_id, interval);
                     break;
                 }
                 }
@@ -478,8 +491,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     }
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT, disconnect reason 0x%x", param->disconnect.reason);
-        if (should_notify && param->connect.conn_id == notify_conn_id) {
-            should_notify = false;
+        if (rc_should_notify && param->connect.conn_id == notify_conn_id) {
+            rc_should_notify = false;
         }
         esp_ble_gap_start_advertising(&adv_params);
         break;
@@ -538,8 +551,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
 void ble_init() {
     esp_err_t ret;
     can_allow_list_enabled = false;
-    memset(can_allow_list, 0, sizeof(uint32_t)*256);
-    can_allow_list_index = 0;
+    can_allow_list.clear();
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
@@ -587,30 +599,65 @@ void ble_init() {
     return;
 }
 
-bool ble_notify(void * data, size_t len) {
-    if (len > 32)
-        len = 32;
+size_t copy_can_frame_to_rc_frame(can_frame_t *frame, uint8_t *rc_data) {
+    // RaceChrono CAN format:
+    // Bytes 0-3: CAN ID in Little Endian
+    // Bytes 4-19: CAN data (WHY 16 Bytes? ISO standard is 8 Bytes MAX)
+    size_t ret = 0;
+    uint32_t can_id = frame->can_id & CAN_ID_MASK;
+    memcpy(rc_data, &can_id, 4);
+    ret = 4;
+    for (int i = 0; i < frame->can_dlc; i++) {
+        ret++;
+        rc_data[4+i] = frame->data[i];
+    }
+    return ret;
+}
+
+bool ble_notify(can_frame_t *frame) {
+    // Update CAN frame for READ operation
     if (xSemaphoreTake(can_data_lock, 10) == pdTRUE) {
-        can_frame_len = len;
-        memcpy(can_frame, data, len);
+        rc_read_can_frame_len = copy_can_frame_to_rc_frame(frame, rc_read_can_frame);
         xSemaphoreGive(can_data_lock);
     }
-    if (should_notify) {
+    if (rc_should_notify) {
         bool can_id_allowed = !can_allow_list_enabled;
+        uint32_t can_id = frame->can_id & CAN_ID_MASK;
+        uint32_t interval = 0;
         if (can_allow_list_enabled) {
-            uint32_t can_id = *(uint32_t*)data;
-            for (int i = 0; i < can_allow_list_index; i++) {
-                if (can_allow_list[i] == can_id) {
-                    can_id_allowed = true;
-                    break;
-                }
-            }
+            auto search = can_allow_list.find(can_id);
+            if (search == can_allow_list.end())
+                return false;
+            interval = search->second;
+            can_id_allowed = true;
+        } else {
+            interval = rc_can_global_interval;
         }
         if (can_id_allowed) {
+            auto search = can_timestamp_history.find(can_id);
+            if (search == can_timestamp_history.end()) {
+                can_timestamp_history[can_id] = frame->timestamp;
+            } else {
+                uint32_t diff = frame->timestamp - search->second;
+                if (diff >= (interval*7/10))
+                    can_timestamp_history[can_id] = frame->timestamp;
+                else
+                    return false;
+            }
+            uint8_t rc_data[32];
+            size_t len;
+            len = copy_can_frame_to_rc_frame(frame, rc_data);
             esp_ble_gatts_send_indicate(notify_gatt_if, notify_conn_id, notify_char_handle,
-                                                len, (uint8_t*)data, false);
+                                                len, rc_data, false);
             return true;
         }
     }
     return false;
+}
+
+void set_ble_name(char *name, size_t len) {
+    if (len > sizeof(ble_device_name)-1)
+        len = sizeof(ble_device_name)-1;
+    memcpy(ble_device_name, name, len);
+    ble_device_name[len] = 0;
 }

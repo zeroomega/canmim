@@ -19,9 +19,15 @@
 #include <esp_bt_main.h>
 #include <esp_gatt_common_api.h>
 
+#include "canmim.h"
+
 
 void ble_init();
 
-bool ble_notify(void * data, size_t len);
+bool ble_notify(can_frame_t *data);
+
+void set_ble_name(char *name, size_t len);
+
+size_t copy_can_frame_to_rc_frame(can_frame_t *frame, uint8_t *rc_data);
 
 #endif
