@@ -2,7 +2,6 @@
 #ifndef CANMIM_BLE_H
 #define CANMIM_BLE_H
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +19,6 @@
 #include <esp_gatt_common_api.h>
 
 #include "canmim.h"
-
 
 void ble_init();
 

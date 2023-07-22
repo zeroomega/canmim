@@ -5,16 +5,16 @@
 
 #define GATTS_TAG "BLE"
 
-///Declare the static function
+/// Declare the static function
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
-#define GATTS_SERVICE_UUID_CAN      0x1FF8
+#define GATTS_SERVICE_UUID_CAN 0x1FF8
 
-#define GATTS_CHAR_UUID_CAN_MAIN    0x0001
-#define GATTS_CHAR_UUID_CAN_FILTER  0x0002
-#define GATTS_NUM_HANDLE_TEST_A     6
+#define GATTS_CHAR_UUID_CAN_MAIN 0x0001
+#define GATTS_CHAR_UUID_CAN_FILTER 0x0002
+#define GATTS_NUM_HANDLE_TEST_A 6
 
-#define DEFAULT_BLE_DEVICE_NAME_STR         "ESPCAN"
+#define DEFAULT_BLE_DEVICE_NAME_STR "ESPCAN"
 
 #define GATTS_DEMO_CHAR_VAL_LEN_MAX 0x40
 
@@ -22,47 +22,77 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
 static char ble_device_name[32];
 
-static uint8_t rc_can_main_str[] = {0x11,0x22,0x33};
+static uint8_t rc_can_main_str[] = {0x11, 0x22, 0x33};
 static esp_gatt_char_prop_t rc_can_main_property = 0;
 
 static esp_attr_value_t gatts_rc_can_char_main_val = {
     .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
-    .attr_len     = sizeof(rc_can_main_str),
-    .attr_value   = rc_can_main_str,
+    .attr_len = sizeof(rc_can_main_str),
+    .attr_value = rc_can_main_str,
 };
 
-static uint8_t rc_can_filter_str[] = {0x11,0x22,0x33};
+static uint8_t rc_can_filter_str[] = {0x11, 0x22, 0x33};
 static esp_gatt_char_prop_t rc_can_filter_property = 0;
 
 static esp_attr_value_t gatts_rc_can_char_filter_val = {
     .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
-    .attr_len     = sizeof(rc_can_filter_str),
-    .attr_value   = rc_can_filter_str,
+    .attr_len = sizeof(rc_can_filter_str),
+    .attr_value = rc_can_filter_str,
 };
 
 static uint8_t adv_config_done = 0;
-#define adv_config_flag      (1 << 0)
+#define adv_config_flag (1 << 0)
 #define scan_rsp_config_flag (1 << 1)
 
 static uint8_t adv_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
-    //first uuid, 16bit, [12],[13] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xEE, 0x00, 0x00, 0x00,
-    //second uuid, 32bit, [12], [13], [14], [15] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
+    // first uuid, 16bit, [12],[13] is the value
+    0xfb,
+    0x34,
+    0x9b,
+    0x5f,
+    0x80,
+    0x00,
+    0x00,
+    0x80,
+    0x00,
+    0x10,
+    0x00,
+    0x00,
+    0xEE,
+    0x00,
+    0x00,
+    0x00,
+    // second uuid, 32bit, [12], [13], [14], [15] is the value
+    0xfb,
+    0x34,
+    0x9b,
+    0x5f,
+    0x80,
+    0x00,
+    0x00,
+    0x80,
+    0x00,
+    0x10,
+    0x00,
+    0x00,
+    0xFF,
+    0x00,
+    0x00,
+    0x00,
 };
 
 // The length of adv data must be less than 31 bytes
-//adv data
+// adv data
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
     .include_name = true,
     .include_txpower = false,
-    .min_interval = 0x0006, //slave connection min interval, Time = min_interval * 1.25 msec
-    .max_interval = 0x0010, //slave connection max interval, Time = max_interval * 1.25 msec
+    .min_interval = 0x0006, // slave connection min interval, Time = min_interval * 1.25 msec
+    .max_interval = 0x0010, // slave connection max interval, Time = max_interval * 1.25 msec
     .appearance = 0x00,
     .manufacturer_len = 0,
-    .p_manufacturer_data =  NULL,
+    .p_manufacturer_data = NULL,
     .service_data_len = 0,
     .p_service_data = NULL,
     .service_uuid_len = sizeof(adv_service_uuid128),
@@ -78,7 +108,7 @@ static esp_ble_adv_data_t scan_rsp_data = {
     .max_interval = 0x0010,
     .appearance = 0x00,
     .manufacturer_len = 0,
-    .p_manufacturer_data =  NULL,
+    .p_manufacturer_data = NULL,
     .service_data_len = 0,
     .p_service_data = NULL,
     .service_uuid_len = sizeof(adv_service_uuid128),
@@ -87,18 +117,18 @@ static esp_ble_adv_data_t scan_rsp_data = {
 };
 
 static esp_ble_adv_params_t adv_params = {
-    .adv_int_min        = 0x20,
-    .adv_int_max        = 0x40,
-    .adv_type           = ADV_TYPE_IND,
-    .own_addr_type      = BLE_ADDR_TYPE_PUBLIC,
-    .peer_addr          = {0, 0, 0, 0, 0, 0},
-    .peer_addr_type     = BLE_ADDR_TYPE_PUBLIC,
-    .channel_map        = ADV_CHNL_ALL,
+    .adv_int_min = 0x20,
+    .adv_int_max = 0x40,
+    .adv_type = ADV_TYPE_IND,
+    .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
+    .peer_addr = {0, 0, 0, 0, 0, 0},
+    .peer_addr_type = BLE_ADDR_TYPE_PUBLIC,
+    .channel_map = ADV_CHNL_ALL,
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-
-struct rc_can_gatts_profile_inst {
+struct rc_can_gatts_profile_inst
+{
     esp_gatts_cb_t gatts_cb;
     uint16_t gatts_if;
     uint16_t app_id;
@@ -108,7 +138,7 @@ struct rc_can_gatts_profile_inst {
     uint16_t char_handle;
     esp_bt_uuid_t char_uuid;
     esp_gatt_perm_t perm;
-    esp_gatt_char_prop_t property;    
+    esp_gatt_char_prop_t property;
     uint16_t char_filter_handle;
     esp_bt_uuid_t char_filter_uuid;
     esp_gatt_perm_t perm_filter;
@@ -120,11 +150,15 @@ struct rc_can_gatts_profile_inst {
 /* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
 static struct rc_can_gatts_profile_inst rc_can_profile = {
     .gatts_cb = gatts_profile_event_handler,
-    .gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
+    .gatts_if = ESP_GATT_IF_NONE, /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
     .app_id = 0,
     .conn_id = 0,
     .service_handle = 0,
-    .service_id = {.id = {.uuid = {.len = 0, .uuid = 0}, .inst_id = 0,}, .is_primary = false},
+    .service_id = {.id = {
+                       .uuid = {.len = 0, .uuid = 0},
+                       .inst_id = 0,
+                   },
+                   .is_primary = false},
     .char_handle = 0,
     .char_uuid = {.len = 0, .uuid = 0},
     .perm = 0,
@@ -137,9 +171,10 @@ static struct rc_can_gatts_profile_inst rc_can_profile = {
     .descr_uuid = {.len = 0, .uuid = 0},
 };
 
-typedef struct {
-    uint8_t                 *prepare_buf;
-    int                     prepare_len;
+typedef struct
+{
+    uint8_t *prepare_buf;
+    int prepare_len;
 } prepare_type_env_t;
 
 static prepare_type_env_t a_prepare_write_env;
@@ -164,61 +199,78 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
 
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
-    switch (event) {
+    switch (event)
+    {
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
         adv_config_done &= (~adv_config_flag);
-        if (adv_config_done == 0){
+        if (adv_config_done == 0)
+        {
             esp_ble_gap_start_advertising(&adv_params);
         }
         break;
     case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
         adv_config_done &= (~scan_rsp_config_flag);
-        if (adv_config_done == 0){
+        if (adv_config_done == 0)
+        {
             esp_ble_gap_start_advertising(&adv_params);
         }
         break;
     case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-        //advertising start complete event to indicate advertising start successfully or failed
-        if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        // advertising start complete event to indicate advertising start successfully or failed
+        if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
+        {
             ESP_LOGE(GATTS_TAG, "Advertising start failed");
         }
         break;
     case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
-        if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS) {
+        if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS)
+        {
             ESP_LOGE(GATTS_TAG, "Advertising stop failed");
-        } else {
+        }
+        else
+        {
             ESP_LOGI(GATTS_TAG, "Stop adv successfully");
         }
         break;
     case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
-         ESP_LOGI(GATTS_TAG, "update connection params status = %d, min_int = %d, max_int = %d,conn_int = %d,latency = %d, timeout = %d",
-                  param->update_conn_params.status,
-                  param->update_conn_params.min_int,
-                  param->update_conn_params.max_int,
-                  param->update_conn_params.conn_int,
-                  param->update_conn_params.latency,
-                  param->update_conn_params.timeout);
+        ESP_LOGI(GATTS_TAG, "update connection params status = %d, min_int = %d, max_int = %d,conn_int = %d,latency = %d, timeout = %d",
+                 param->update_conn_params.status,
+                 param->update_conn_params.min_int,
+                 param->update_conn_params.max_int,
+                 param->update_conn_params.conn_int,
+                 param->update_conn_params.latency,
+                 param->update_conn_params.timeout);
         break;
     default:
         break;
     }
 }
 
-void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
+void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param)
+{
     esp_gatt_status_t status = ESP_GATT_OK;
-    if (param->write.need_rsp){
-        if (param->write.is_prep){
-            if (prepare_write_env->prepare_buf == NULL) {
-                prepare_write_env->prepare_buf = (uint8_t *)malloc(PREPARE_BUF_MAX_SIZE*sizeof(uint8_t));
+    if (param->write.need_rsp)
+    {
+        if (param->write.is_prep)
+        {
+            if (prepare_write_env->prepare_buf == NULL)
+            {
+                prepare_write_env->prepare_buf = (uint8_t *)malloc(PREPARE_BUF_MAX_SIZE * sizeof(uint8_t));
                 prepare_write_env->prepare_len = 0;
-                if (prepare_write_env->prepare_buf == NULL) {
+                if (prepare_write_env->prepare_buf == NULL)
+                {
                     ESP_LOGE(GATTS_TAG, "Gatt_server prep no mem");
                     status = ESP_GATT_NO_RESOURCES;
                 }
-            } else {
-                if(param->write.offset > PREPARE_BUF_MAX_SIZE) {
+            }
+            else
+            {
+                if (param->write.offset > PREPARE_BUF_MAX_SIZE)
+                {
                     status = ESP_GATT_INVALID_OFFSET;
-                } else if ((param->write.offset + param->write.len) > PREPARE_BUF_MAX_SIZE) {
+                }
+                else if ((param->write.offset + param->write.len) > PREPARE_BUF_MAX_SIZE)
+                {
                     status = ESP_GATT_INVALID_ATTR_LEN;
                 }
             }
@@ -230,62 +282,77 @@ void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare
             gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
             memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
             esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
-            if (response_err != ESP_OK){
-               ESP_LOGE(GATTS_TAG, "Send response error");
+            if (response_err != ESP_OK)
+            {
+                ESP_LOGE(GATTS_TAG, "Send response error");
             }
             free(gatt_rsp);
-            if (status != ESP_GATT_OK){
+            if (status != ESP_GATT_OK)
+            {
                 return;
             }
             memcpy(prepare_write_env->prepare_buf + param->write.offset,
                    param->write.value,
                    param->write.len);
             prepare_write_env->prepare_len += param->write.len;
-
-        }else{
+        }
+        else
+        {
             esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
         }
     }
 }
 
-void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
-    if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC){
+void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param)
+{
+    if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC)
+    {
         esp_log_buffer_hex("BLEWRITE_EXEC", prepare_write_env->prepare_buf, prepare_write_env->prepare_len);
-    }else{
-        ESP_LOGI(GATTS_TAG,"ESP_GATT_PREP_WRITE_CANCEL");
     }
-    if (prepare_write_env->prepare_buf) {
+    else
+    {
+        ESP_LOGI(GATTS_TAG, "ESP_GATT_PREP_WRITE_CANCEL");
+    }
+    if (prepare_write_env->prepare_buf)
+    {
         free(prepare_write_env->prepare_buf);
         prepare_write_env->prepare_buf = NULL;
     }
     prepare_write_env->prepare_len = 0;
 }
 
-static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    switch (event) {
-    case ESP_GATTS_REG_EVT: {
+static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
+{
+    switch (event)
+    {
+    case ESP_GATTS_REG_EVT:
+    {
         ESP_LOGI(GATTS_TAG, "REGISTER_APP_EVT, status %d, app_id %d", param->reg.status, param->reg.app_id);
         rc_can_profile.service_id.is_primary = true;
         rc_can_profile.service_id.id.inst_id = 0x00;
         rc_can_profile.service_id.id.uuid.len = ESP_UUID_LEN_16;
         rc_can_profile.service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_CAN;
 
-        if (strlen(ble_device_name) == 0) {
+        if (strlen(ble_device_name) == 0)
+        {
             strcpy(ble_device_name, DEFAULT_BLE_DEVICE_NAME_STR);
         }
         esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(ble_device_name);
-        if (set_dev_name_ret){
+        if (set_dev_name_ret)
+        {
             ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
         }
-        //config adv data
+        // config adv data
         esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
-        if (ret){
+        if (ret)
+        {
             ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
         }
         adv_config_done |= adv_config_flag;
-        //config scan response data
+        // config scan response data
         ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
-        if (ret){
+        if (ret)
+        {
             ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
         }
         adv_config_done |= scan_rsp_config_flag;
@@ -293,12 +360,14 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         esp_ble_gatts_create_service(gatts_if, &rc_can_profile.service_id, GATTS_NUM_HANDLE_TEST_A);
         break;
     }
-    case ESP_GATTS_READ_EVT: {
+    case ESP_GATTS_READ_EVT:
+    {
         ESP_LOGI(GATTS_TAG, "GATT_READ_EVT, conn_id %d, trans_id %" PRIu32 ", handle %d", param->read.conn_id, param->read.trans_id, param->read.handle);
         esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));        
+        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
-        if (xSemaphoreTake(can_data_lock, 1) == pdTRUE) {
+        if (xSemaphoreTake(can_data_lock, 1) == pdTRUE)
+        {
             rsp.attr_value.len = rc_read_can_frame_len;
             memcpy(rsp.attr_value.value, rc_read_can_frame, rc_read_can_frame_len);
             xSemaphoreGive(can_data_lock);
@@ -307,24 +376,32 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                                     ESP_GATT_OK, &rsp);
         break;
     }
-    case ESP_GATTS_WRITE_EVT: {
+    case ESP_GATTS_WRITE_EVT:
+    {
         ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
-        if (!param->write.is_prep){
+        if (!param->write.is_prep)
+        {
             ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, value len %d, value :", param->write.len);
             esp_log_buffer_hex("BLEWRITE", param->write.value, param->write.len);
-            if (rc_can_profile.descr_handle == param->write.handle && param->write.len == 2){
+            if (rc_can_profile.descr_handle == param->write.handle && param->write.len == 2)
+            {
                 // Write event to CCCD
-                uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
-                if (descr_value == 0x0001){
-                    if (rc_can_main_property & ESP_GATT_CHAR_PROP_BIT_NOTIFY){
+                uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
+                if (descr_value == 0x0001)
+                {
+                    if (rc_can_main_property & ESP_GATT_CHAR_PROP_BIT_NOTIFY)
+                    {
                         ESP_LOGI(GATTS_TAG, "notify enable");
                         notify_char_handle = rc_can_profile.char_handle;
                         notify_conn_id = param->write.conn_id;
                         notify_gatt_if = gatts_if;
                         rc_should_notify = true;
                     }
-                }else if (descr_value == 0x0002){
-                    if (rc_can_main_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
+                }
+                else if (descr_value == 0x0002)
+                {
+                    if (rc_can_main_property & ESP_GATT_CHAR_PROP_BIT_INDICATE)
+                    {
                         ESP_LOGI(GATTS_TAG, "indicate enable");
                         notify_char_handle = rc_can_profile.char_handle;
                         notify_conn_id = param->write.conn_id;
@@ -332,28 +409,37 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                         rc_should_notify = true;
                     }
                 }
-                else if (descr_value == 0x0000){
+                else if (descr_value == 0x0000)
+                {
                     rc_should_notify = false;
                     ESP_LOGI(GATTS_TAG, "notify/indicate disable ");
-                }else{
+                }
+                else
+                {
                     ESP_LOGE(GATTS_TAG, "unknown descr value");
                     esp_log_buffer_hex("BLEWRITE", param->write.value, param->write.len);
                 }
             }
-            if (rc_can_profile.char_filter_handle == param->write.handle && param->write.len > 0) {
+            if (rc_can_profile.char_filter_handle == param->write.handle && param->write.len > 0)
+            {
                 // Write event to filter command.
-                uint8_t cmd = param->write.value[0];;
-                switch(cmd) {
-                case 0:{ //deny all
+                uint8_t cmd = param->write.value[0];
+                ;
+                switch (cmd)
+                {
+                case 0:
+                { // deny all
                     can_allow_list_enabled = true;
                     can_allow_list.clear();
                     ESP_LOGI(GATTS_TAG, "CAN Filter, Deny All");
                     break;
                 }
-                case 1:{ // allow all
+                case 1:
+                { // allow all
                     can_allow_list_enabled = false;
                     can_allow_list.clear();
-                    if (param->write.len < 3) {
+                    if (param->write.len < 3)
+                    {
                         ESP_LOGI(GATTS_TAG, "CAN Filter, Allow All");
                         break;
                     }
@@ -363,7 +449,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                     rc_can_global_interval = interval;
                     break;
                 }
-                case 2:{ // allow one CAN ID
+                case 2:
+                { // allow one CAN ID
                     if (!can_allow_list_enabled)
                         break;
                     if (param->write.len < 7)
@@ -383,8 +470,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         example_write_event_env(gatts_if, &a_prepare_write_env, param);
         break;
     }
-    case ESP_GATTS_EXEC_WRITE_EVT: {
-        ESP_LOGI(GATTS_TAG,"ESP_GATTS_EXEC_WRITE_EVT");
+    case ESP_GATTS_EXEC_WRITE_EVT:
+    {
+        ESP_LOGI(GATTS_TAG, "ESP_GATTS_EXEC_WRITE_EVT");
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
         example_exec_write_event_env(&a_prepare_write_env, param);
         break;
@@ -394,7 +482,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         break;
     case ESP_GATTS_UNREG_EVT:
         break;
-    case ESP_GATTS_CREATE_EVT:{
+    case ESP_GATTS_CREATE_EVT:
+    {
         ESP_LOGI(GATTS_TAG, "CREATE_SERVICE_EVT, status %d,  service_handle %d", param->create.status, param->create.service_handle);
         rc_can_profile.service_handle = param->create.service_handle;
         rc_can_profile.char_uuid.len = ESP_UUID_LEN_16;
@@ -408,53 +497,58 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                         rc_can_main_property,
                                                         &gatts_rc_can_char_main_val, NULL);
-        if (add_char_ret){
-            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
+        if (add_char_ret)
+        {
+            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x", add_char_ret);
         }
 
         rc_can_profile.descr_uuid.len = ESP_UUID_LEN_16;
         rc_can_profile.descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
         esp_err_t add_descr_ret = esp_ble_gatts_add_char_descr(rc_can_profile.service_handle, &rc_can_profile.descr_uuid,
-                                                                    ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, NULL, NULL);
+                                                               ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, NULL, NULL);
         ESP_LOGI(GATTS_TAG, "esp_ble_gatts_add_char_descr called");
-        if (add_descr_ret){
+        if (add_descr_ret)
+        {
             ESP_LOGE(GATTS_TAG, "add char descr failed, error code =%x", add_descr_ret);
         }
 
         rc_can_filter_property = ESP_GATT_CHAR_PROP_BIT_WRITE;
         add_char_ret = esp_ble_gatts_add_char(rc_can_profile.service_handle, &rc_can_profile.char_filter_uuid,
-                                                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                                                rc_can_filter_property,
-                                                &gatts_rc_can_char_filter_val, NULL);
-        if (add_char_ret){
-            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
+                                              ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                              rc_can_filter_property,
+                                              &gatts_rc_can_char_filter_val, NULL);
+        if (add_char_ret)
+        {
+            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x", add_char_ret);
         }
         break;
     }
     case ESP_GATTS_ADD_INCL_SRVC_EVT:
         break;
-    case ESP_GATTS_ADD_CHAR_EVT: {
+    case ESP_GATTS_ADD_CHAR_EVT:
+    {
         uint16_t length = 0;
         const uint8_t *prf_char;
 
         ESP_LOGI(GATTS_TAG, "ADD_CHAR_EVT, status %d,  attr_handle %d, service_handle %d",
-                param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
+                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
         if (param->add_char.char_uuid.uuid.uuid16 == rc_can_profile.char_uuid.uuid.uuid16)
             rc_can_profile.char_handle = param->add_char.attr_handle;
         else if (param->add_char.char_uuid.uuid.uuid16 == rc_can_profile.char_filter_uuid.uuid.uuid16)
-            rc_can_profile.char_filter_handle =  param->add_char.attr_handle;
+            rc_can_profile.char_filter_handle = param->add_char.attr_handle;
 
-        esp_err_t get_attr_ret = esp_ble_gatts_get_attr_value(param->add_char.attr_handle,  &length, &prf_char);
-        if (get_attr_ret == ESP_FAIL){
+        esp_err_t get_attr_ret = esp_ble_gatts_get_attr_value(param->add_char.attr_handle, &length, &prf_char);
+        if (get_attr_ret == ESP_FAIL)
+        {
             ESP_LOGE(GATTS_TAG, "ILLEGAL HANDLE");
         }
 
         ESP_LOGI(GATTS_TAG, "the gatts demo char length = %x", length);
-        for(int i = 0; i < length; i++){
-            ESP_LOGI(GATTS_TAG, "prf_char[%x] =%x",i,prf_char[i]);
+        for (int i = 0; i < length; i++)
+        {
+            ESP_LOGI(GATTS_TAG, "prf_char[%x] =%x", i, prf_char[i]);
         }
 
-        
         break;
     }
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
@@ -470,35 +564,38 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         break;
     case ESP_GATTS_STOP_EVT:
         break;
-    case ESP_GATTS_CONNECT_EVT: {
+    case ESP_GATTS_CONNECT_EVT:
+    {
         esp_ble_conn_update_params_t conn_params;
         memset(&conn_params, 0, sizeof(esp_ble_conn_update_params_t));
         memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
         conn_params.latency = 10;
-        conn_params.max_int = 0x20;    // max_int = 0x20*1.25ms = 40ms
-        conn_params.min_int = 0x0A;    // min_int = 0x0A*1.25ms = 12.5ms
-        conn_params.timeout = 400;    // timeout = 400*10ms = 4000ms
+        conn_params.max_int = 0x20; // max_int = 0x20*1.25ms = 40ms
+        conn_params.min_int = 0x0A; // min_int = 0x0A*1.25ms = 12.5ms
+        conn_params.timeout = 400;  // timeout = 400*10ms = 4000ms
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONNECT_EVT, conn_id %d, remote %02x:%02x:%02x:%02x:%02x:%02x:",
                  param->connect.conn_id,
                  param->connect.remote_bda[0], param->connect.remote_bda[1], param->connect.remote_bda[2],
                  param->connect.remote_bda[3], param->connect.remote_bda[4], param->connect.remote_bda[5]);
         rc_can_profile.conn_id = param->connect.conn_id;
-        //start sent the update connection parameters to the peer device.
+        // start sent the update connection parameters to the peer device.
         esp_ble_gap_update_conn_params(&conn_params);
         // Advertising will stop as a client is connected.
         break;
     }
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(GATTS_TAG, "ESP_GATTS_DISCONNECT_EVT, disconnect reason 0x%x", param->disconnect.reason);
-        if (rc_should_notify && param->connect.conn_id == notify_conn_id) {
+        if (rc_should_notify && param->connect.conn_id == notify_conn_id)
+        {
             rc_should_notify = false;
         }
         esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GATTS_CONF_EVT:
-        //ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d attr_handle %d", param->conf.status, param->conf.handle);
-        if (param->conf.status != ESP_GATT_OK){
+        // ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d attr_handle %d", param->conf.status, param->conf.handle);
+        if (param->conf.status != ESP_GATT_OK)
+        {
             ESP_LOGI(GATTS_TAG, "ESP_GATTS_CONF_EVT, status %d attr_handle %d", param->conf.status, param->conf.handle);
             esp_log_buffer_hex("BLECONFIRM", param->conf.value, param->conf.len);
         }
@@ -515,8 +612,10 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
     }
 }
 
-void print_addr(uint8_t addr[]) {
-    for (int i = 0; i < 6; i++) {
+void print_addr(uint8_t addr[])
+{
+    for (int i = 0; i < 6; i++)
+    {
         printf("%x", addr[i]);
         if (i != 5)
             printf(":");
@@ -526,13 +625,17 @@ void print_addr(uint8_t addr[]) {
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
 {
     /* If event is register event, store the gatts_if for each profile */
-    if (event == ESP_GATTS_REG_EVT) {
-        if (param->reg.status == ESP_GATT_OK) {
+    if (event == ESP_GATTS_REG_EVT)
+    {
+        if (param->reg.status == ESP_GATT_OK)
+        {
             rc_can_profile.gatts_if = gatts_if;
-        } else {
+        }
+        else
+        {
             ESP_LOGI(GATTS_TAG, "Reg app failed, app_id %04x, status %d",
-                    param->reg.app_id,
-                    param->reg.status);
+                     param->reg.app_id,
+                     param->reg.status);
             return;
         }
     }
@@ -540,66 +643,77 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
     /* If the gatts_if equal to profile A, call profile A cb handler,
      * so here call each profile's callback */
     if (gatts_if == ESP_GATT_IF_NONE || /* ESP_GATT_IF_NONE, not specify a certain gatt_if, need to call every profile cb function */
-        gatts_if == rc_can_profile.gatts_if) {
-        if (rc_can_profile.gatts_cb) {
+        gatts_if == rc_can_profile.gatts_if)
+    {
+        if (rc_can_profile.gatts_cb)
+        {
             rc_can_profile.gatts_cb(event, gatts_if, param);
         }
     }
 }
 
-
-void ble_init() {
+void ble_init()
+{
     esp_err_t ret;
     can_allow_list_enabled = false;
     can_allow_list.clear();
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
-    if (ret) {
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "%s initialize controller failed", __func__);
         return;
     }
 
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
-    if (ret) {
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "%s enable controller failed", __func__);
         return;
     }
     ret = esp_bluedroid_init();
-    if (ret) {
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "%s init bluetooth failed", __func__);
         return;
     }
     ret = esp_bluedroid_enable();
-    if (ret) {
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "%s enable bluetooth failed", __func__);
         return;
     }
 
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
-    if (ret){
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "gatts register error, error code = %x", ret);
         return;
     }
     ret = esp_ble_gap_register_callback(gap_event_handler);
-    if (ret){
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "gap register error, error code = %x", ret);
         return;
     }
     ret = esp_ble_gatts_app_register(0);
-    if (ret){
+    if (ret)
+    {
         ESP_LOGE(GATTS_TAG, "gatts app register error, error code = %x", ret);
         return;
     }
     esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(512);
-    if (local_mtu_ret){
+    if (local_mtu_ret)
+    {
         ESP_LOGE(GATTS_TAG, "set local MTU failed, error code = %x", local_mtu_ret);
     }
     can_data_lock = xSemaphoreCreateMutex();
     return;
 }
 
-size_t copy_can_frame_to_rc_frame(can_frame_t *frame, uint8_t *rc_data) {
+size_t copy_can_frame_to_rc_frame(can_frame_t *frame, uint8_t *rc_data)
+{
     // RaceChrono CAN format:
     // Bytes 0-3: CAN ID in Little Endian
     // Bytes 4-19: CAN data (WHY 16 Bytes? ISO standard is 8 Bytes MAX)
@@ -607,39 +721,50 @@ size_t copy_can_frame_to_rc_frame(can_frame_t *frame, uint8_t *rc_data) {
     uint32_t can_id = frame->can_id & CAN_ID_MASK;
     memcpy(rc_data, &can_id, 4);
     ret = 4;
-    for (int i = 0; i < frame->can_dlc; i++) {
+    for (int i = 0; i < frame->can_dlc; i++)
+    {
         ret++;
-        rc_data[4+i] = frame->data[i];
+        rc_data[4 + i] = frame->data[i];
     }
     return ret;
 }
 
-bool ble_notify(can_frame_t *frame) {
+bool ble_notify(can_frame_t *frame)
+{
     // Update CAN frame for READ operation
-    if (xSemaphoreTake(can_data_lock, 10) == pdTRUE) {
+    if (xSemaphoreTake(can_data_lock, 10) == pdTRUE)
+    {
         rc_read_can_frame_len = copy_can_frame_to_rc_frame(frame, rc_read_can_frame);
         xSemaphoreGive(can_data_lock);
     }
-    if (rc_should_notify) {
+    if (rc_should_notify)
+    {
         bool can_id_allowed = !can_allow_list_enabled;
         uint32_t can_id = frame->can_id & CAN_ID_MASK;
         uint32_t interval = 0;
-        if (can_allow_list_enabled) {
+        if (can_allow_list_enabled)
+        {
             auto search = can_allow_list.find(can_id);
             if (search == can_allow_list.end())
                 return false;
             interval = search->second;
             can_id_allowed = true;
-        } else {
+        }
+        else
+        {
             interval = rc_can_global_interval;
         }
-        if (can_id_allowed) {
+        if (can_id_allowed)
+        {
             auto search = can_timestamp_history.find(can_id);
-            if (search == can_timestamp_history.end()) {
+            if (search == can_timestamp_history.end())
+            {
                 can_timestamp_history[can_id] = frame->timestamp;
-            } else {
+            }
+            else
+            {
                 uint32_t diff = frame->timestamp - search->second;
-                if (diff >= (interval*7/10))
+                if (diff >= (interval * 7 / 10))
                     can_timestamp_history[can_id] = frame->timestamp;
                 else
                     return false;
@@ -648,16 +773,17 @@ bool ble_notify(can_frame_t *frame) {
             size_t len;
             len = copy_can_frame_to_rc_frame(frame, rc_data);
             esp_ble_gatts_send_indicate(notify_gatt_if, notify_conn_id, notify_char_handle,
-                                                len, rc_data, false);
+                                        len, rc_data, false);
             return true;
         }
     }
     return false;
 }
 
-void set_ble_name(char *name, size_t len) {
-    if (len > sizeof(ble_device_name)-1)
-        len = sizeof(ble_device_name)-1;
+void set_ble_name(char *name, size_t len)
+{
+    if (len > sizeof(ble_device_name) - 1)
+        len = sizeof(ble_device_name) - 1;
     memcpy(ble_device_name, name, len);
     ble_device_name[len] = 0;
 }

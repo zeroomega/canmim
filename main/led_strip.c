@@ -44,7 +44,8 @@ static uint32_t ws2812_t1h_ticks = 0;
 static uint32_t ws2812_t0l_ticks = 0;
 static uint32_t ws2812_t1l_ticks = 0;
 
-typedef struct {
+typedef struct
+{
     led_strip_t parent;
     rmt_channel_t rmt_channel;
     uint32_t strip_len;
@@ -64,26 +65,32 @@ typedef struct {
  * @param[out] item_num: number of RMT items which are converted from source data
  */
 static void IRAM_ATTR ws2812_rmt_adapter(const void *src, rmt_item32_t *dest, size_t src_size,
-        size_t wanted_num, size_t *translated_size, size_t *item_num)
+                                         size_t wanted_num, size_t *translated_size, size_t *item_num)
 {
-    if (src == NULL || dest == NULL) {
+    if (src == NULL || dest == NULL)
+    {
         *translated_size = 0;
         *item_num = 0;
         return;
     }
-    const rmt_item32_t bit0 = {{{ ws2812_t0h_ticks, 1, ws2812_t0l_ticks, 0 }}}; //Logical 0
-    const rmt_item32_t bit1 = {{{ ws2812_t1h_ticks, 1, ws2812_t1l_ticks, 0 }}}; //Logical 1
+    const rmt_item32_t bit0 = {{{ws2812_t0h_ticks, 1, ws2812_t0l_ticks, 0}}}; // Logical 0
+    const rmt_item32_t bit1 = {{{ws2812_t1h_ticks, 1, ws2812_t1l_ticks, 0}}}; // Logical 1
     size_t size = 0;
     size_t num = 0;
     uint8_t *psrc = (uint8_t *)src;
     rmt_item32_t *pdest = dest;
-    while (size < src_size && num < wanted_num) {
-        for (int i = 0; i < 8; i++) {
+    while (size < src_size && num < wanted_num)
+    {
+        for (int i = 0; i < 8; i++)
+        {
             // MSB first
-            if (*psrc & (1 << (7 - i))) {
-                pdest->val =  bit1.val;
-            } else {
-                pdest->val =  bit0.val;
+            if (*psrc & (1 << (7 - i)))
+            {
+                pdest->val = bit1.val;
+            }
+            else
+            {
+                pdest->val = bit0.val;
             }
             num++;
             pdest++;
@@ -172,7 +179,7 @@ err:
     return ret;
 }
 
-led_strip_t * led_strip_init(uint8_t channel, uint8_t gpio, uint16_t led_num)
+led_strip_t *led_strip_init(uint8_t channel, uint8_t gpio, uint16_t led_num)
 {
     static led_strip_t *pStrip;
 
@@ -188,7 +195,8 @@ led_strip_t * led_strip_init(uint8_t channel, uint8_t gpio, uint16_t led_num)
 
     pStrip = led_strip_new_rmt_ws2812(&strip_config);
 
-    if ( !pStrip ) {
+    if (!pStrip)
+    {
         ESP_LOGE(TAG, "install WS2812 driver failed");
         return NULL;
     }
