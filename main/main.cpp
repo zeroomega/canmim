@@ -41,6 +41,8 @@ QueueHandle_t bleOutputQueue;
 
 volatile bool shouldUpdateADC = false;
 
+volatile bool can_sb_switch = false;
+
 #ifdef CANMIM_PRINT_METRICS
 
 volatile size_t CAN_IN_COUNT = 0;
@@ -89,6 +91,8 @@ uint8_t calc_oil_pressure(uint32_t adc_mv);
 void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv);
 
 void handling_incoming_message();
+
+void process_can_sb_trigger_message(const can_frame_t *frame);
 
 static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
 {
@@ -489,6 +493,7 @@ void handling_incoming_message()
             if (can_isolation)
                 xQueueSend(canOutputQueue, &frame, 0);
             xQueueSend(bleOutputQueue, &frame, 0);
+            process_can_sb_trigger_message(&frame);
         }
         break;
     case ESP_ERR_TIMEOUT:
@@ -497,6 +502,46 @@ void handling_incoming_message()
         break;
     default:
         ESP_LOGE("ESPCAN", "Failed when receiving due to %s", esp_err_to_name(ret_code));
+    }
+}
+
+void process_can_sb_trigger_message(const can_frame_t *frame)
+{
+    // CAN Switch Board need to be ON at 4200RPM
+    // AND OFF at 3800 RPM
+    if (frame->can_id == 0x140)
+    {
+        uint16_t rpm = frame->data[2];
+        rpm |= (frame->data[3] & 0x3F) << 8;
+        if (rpm > 4200)
+        {
+            if (can_sb_switch == false)
+            {
+                can_sb_switch = true;
+                can_frame_t trigger_frame;
+                memset(&trigger_frame, 0, sizeof(can_frame_t));
+                trigger_frame.can_id = CAN_SB_BASE_ID + 3;
+                trigger_frame.can_dlc = 8;
+                trigger_frame.data[0] = 1;
+                for (int i = 0; i < 3; i++)
+                    xQueueSend(canOutputQueue, &trigger_frame, 5);
+                return;
+            }
+        }
+        if (rpm < 3800)
+        {
+            if (can_sb_switch == true)
+            {
+                can_sb_switch = false;
+                can_frame_t trigger_frame;
+                memset(&trigger_frame, 0, sizeof(can_frame_t));
+                trigger_frame.can_id = CAN_SB_BASE_ID + 3;
+                trigger_frame.can_dlc = 8;
+                for (int i = 0; i < 3; i++)
+                    xQueueSend(canOutputQueue, &trigger_frame, 5);
+                return;
+            }
+        }
     }
 }
 
