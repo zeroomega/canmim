@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_system.h"
@@ -35,9 +36,13 @@
 spi_device_handle_t spi_mcp2515;
 adc_cali_handle_t adc1_cali_handle = NULL;
 adc_continuous_handle_t adc1_cont_handle = NULL;
+MCP2515 *mcpCan = nullptr;
 
+
+QueueHandle_t spiLock;
 QueueHandle_t canOutputQueue;
 QueueHandle_t bleOutputQueue;
+QueueHandle_t spiCanIntrQueue;
 
 volatile bool shouldUpdateADC = false;
 
@@ -60,6 +65,8 @@ void gpio_init();
 void incomingCANTask(void *pvParameter);
 
 void outgoingCANTask(void *pvParameter);
+
+void spiCanTask(void *pvParameter);
 
 void bleTask(void *pvParameter);
 
@@ -133,6 +140,7 @@ extern "C" void app_main(void)
     if (can_isolation)
     {
         init_spi();
+        spiLock = xSemaphoreCreateMutex();
         ESP_LOGI(LOG_MCU_TAG, "SPI Init");
         printf("SPI Init\n");
     }
@@ -169,6 +177,8 @@ extern "C" void app_main(void)
 
     xTaskCreate(incomingCANTask, "incomingCANTask", 4096, NULL, 1, NULL);
     xTaskCreate(outgoingCANTask, "outgoingCANTask", 4096, NULL, 3, NULL);
+    if (can_isolation)
+        xTaskCreate(spiCanTask, "spiCanTask", 4096, NULL, 3, NULL);
     xTaskCreate(bleTask, "bleTask", 4096, NULL, 2, NULL);
 }
 
@@ -196,12 +206,28 @@ void set_ble_name_from_mac()
     ESP_LOGI(LOG_BLE_TAG, "BLE Device name: %s", ble_name);
 }
 
+static void IRAM_ATTR can_int_handler(void *arg) {
+    int dummy = 0;
+    xQueueSendFromISR(spiCanIntrQueue, &dummy, NULL);
+}
+
 void gpio_init()
 {
     // Set MCP2525 interrupt pin to float as we don't use it
     // for now.
-    if (MCP_INT != -1)
-        gpio_set_pull_mode((gpio_num_t)MCP_INT, GPIO_FLOATING);
+    if (MCP_INT != -1) {
+        gpio_config_t io_conf;
+        memset(&io_conf, 0, sizeof(gpio_config_t));
+        io_conf.intr_type = GPIO_INTR_NEGEDGE;
+        io_conf.pin_bit_mask = 1ULL << MCP_INT;
+        io_conf.mode = GPIO_MODE_INPUT;
+        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        gpio_config(&io_conf);
+        gpio_install_isr_service(0);
+        gpio_isr_handler_add((gpio_num_t)MCP_INT, can_int_handler, NULL);
+        spiCanIntrQueue = xQueueCreate(10, sizeof(int));
+    }
+
 #ifndef ISO_OVERRIDE
     if (ISO_PIN != -1)
     {
@@ -530,11 +556,15 @@ void incomingCANTask(void *pvParameter)
 
 void outgoingCANTask(void *pvParameter)
 {
-    MCP2515 *mcpCan = nullptr;
     if (can_isolation)
     {
+        if (xSemaphoreTake(spiLock, portMAX_DELAY) != pdTRUE) {
+            ESP_LOGE("SPI", "Cannot obtaine SPI Lock");
+            fatal_error();
+        }
         mcpCan = new MCP2515(&spi_mcp2515);
         printf("Created MCP2515 object\n");
+        mcpCan->setInterruptMask(MCP2515::CANINTF_RX0IF | MCP2515::CANINTF_RX1IF);
         mcpCan->reset();
         printf("Reset MCP2515 \n");
         mcpCan->setBitrate(CAN_500KBPS, MCP_8MHZ);
@@ -542,6 +572,7 @@ void outgoingCANTask(void *pvParameter)
         mcpCan->setNormalMode();
         printf("Set Normal mode MCP2515 \n");
         MCP2515::ERROR err = mcpCan->setOneShotMode(true);
+        xSemaphoreGive(spiLock);
         if (err != MCP2515::ERROR_OK)
         {
             ESP_LOGE("MCP2515", "Failed to set One Shot Mode");
@@ -575,7 +606,10 @@ void outgoingCANTask(void *pvParameter)
                 mcp_frame.can_dlc = frame.can_dlc;
                 memcpy(mcp_frame.data, frame.data, CAN_MAX_DATALEN);
                 int64_t begin = esp_timer_get_time();
+                if (xSemaphoreTake(spiLock, portMAX_DELAY) != pdTRUE)
+                    continue;
                 MCP2515::ERROR err = mcpCan->sendMessageSkipStatus(&mcp_frame);
+                xSemaphoreGive(spiLock);
                 int64_t end = esp_timer_get_time();
                 MCP_TIMER = (end - begin);
                 if (err != MCP2515::ERROR_OK)
@@ -598,6 +632,47 @@ void outgoingCANTask(void *pvParameter)
                 if (ret_code != ESP_OK)
                     ESP_LOGE("ESPCAN", "Failed when transmitting due to %s", esp_err_to_name(ret_code));
             }
+        }
+    }
+}
+
+void spiCanTask(void *pvParameter) {
+    for(;;) {
+        int dummy;
+        can_frame mcp_frame;
+        can_frame_t frame;
+        memset(&frame, 0, sizeof(can_frame_t));
+        if (xQueueReceive(spiCanIntrQueue, &dummy, 20) == pdTRUE) {
+            // INT pin interrupt received.
+            if (mcpCan == nullptr)
+                continue;
+            if (xSemaphoreTake(spiLock, portMAX_DELAY) != pdTRUE)
+                continue;
+            uint8_t intr = mcpCan->getInterrupts();
+            if (intr & MCP2515::CANINTF_RX0IF) {
+                MCP2515::ERROR err = mcpCan->readMessage(MCP2515::RXB0, &mcp_frame);
+                if (err != MCP2515::ERROR::ERROR_OK) {
+                    ESP_LOGE("MCP", "Receive error: %d", (int)err);
+                } else {
+                    frame.can_dlc = mcp_frame.can_dlc;
+                    frame.can_id =  mcp_frame.can_id;
+                    memcpy(mcp_frame.data, frame.data, CAN_MAX_DATALEN);
+                    xQueueSend(bleOutputQueue, &frame, 0);
+                }
+
+            }
+            if (intr & MCP2515::CANINTF_RX1IF) {
+                MCP2515::ERROR err = mcpCan->readMessage(MCP2515::RXB1, &mcp_frame);
+                if (err != MCP2515::ERROR::ERROR_OK) {
+                    ESP_LOGE("MCP", "Receive error: %d", (int)err);
+                } else {
+                    frame.can_dlc = mcp_frame.can_dlc;
+                    frame.can_id =  mcp_frame.can_id;
+                    memcpy(mcp_frame.data, frame.data, CAN_MAX_DATALEN);
+                    xQueueSend(bleOutputQueue, &frame, 0);
+                }
+            }
+            xSemaphoreGive(spiLock);
         }
     }
 }

@@ -1,5 +1,5 @@
-#ifndef _BOARD_CONFIG_H_
-#define _BOARD_CONFIG_H_
+#ifndef _BOARD_CONFIG_V4_LITE_H_
+#define _BOARD_CONFIG_V4_LITE_H_
 
 // SPI PIN Map
 #define MCP_SCK   -1

@@ -1,16 +1,16 @@
-#ifndef _BOARD_CONFIG_V3_H_
-#define _BOARD_CONFIG_V3_H_
+#ifndef _BOARD_CONFIG_V3_LITE_H_
+#define _BOARD_CONFIG_V3_LITE_H_
 
 // SPI PIN Map
-#define MCP_SCK   7
-#define MCP_MOSI 10
-#define MCP_MISO  8
-#define MCP_CS    9
-#define MCP_INT   6
+#define MCP_SCK   -1
+#define MCP_MOSI  -1
+#define MCP_MISO  -1
+#define MCP_CS    -1
+#define MCP_INT   -1
 
 // Isolation Control PIN
 // #define ISO_PIN   5
-#define ISO_OVERRIDE 1
+#define ISO_OVERRIDE 0
 
 // CAN Controller PIN Map
 #define CAN_TX    3
@@ -36,5 +36,7 @@
 #define CANMIM_PRINT_METRICS
 
 #define BLE_DEVICE_NAME_BASE "ESPCAN"
+
+#define CAN_SB_BASE_ID 0x643
 
 #endif
