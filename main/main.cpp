@@ -529,7 +529,7 @@ void handling_incoming_message()
 void set_led()
 {
     static led_strip_t *pStrip_a;
-    pStrip_a = led_strip_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    pStrip_a = led_strip_init(RMT_CHANNEL_0, LED_PIN, 1);
     pStrip_a->clear(pStrip_a, 50);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     pStrip_a->set_pixel(pStrip_a, 0, 6, 10, 6);
@@ -623,6 +623,7 @@ void outgoingCANTask(void *pvParameter)
             }
             else
             {
+                CAN_OUT_COUNT++;
                 twai_message_t message;
                 memset(&message, 0, sizeof(message));
                 message.identifier = frame.can_id;
