@@ -53,8 +53,8 @@ volatile size_t CAN_OUT_COUNT = 0;
 volatile size_t BLE_OUT_COUNT = 0;
 volatile size_t BLE_NOTIFIED_COUNT = 0;
 volatile int64_t MCP_TIMER = 0;
+volatile uint32_t ADC0_MV = 0;
 volatile uint32_t ADC1_MV = 0;
-volatile uint32_t ADC2_MV = 0;
 
 #endif
 
@@ -91,9 +91,9 @@ void set_led();
 
 void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv);
 
-uint8_t calc_oil_pressure(uint32_t adc_mv);
+uint16_t calc_oil_pressure(uint32_t adc_mv);
 
-void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv);
+void send_adc_data_to_can(uint32_t adc0_mv, uint32_t adc1_mv);
 
 void handling_incoming_message();
 
@@ -117,7 +117,7 @@ static void tick_timer_cb(void *arg)
     ESP_LOGI("TIMER", "ble_out_count: %zu", ble_out_count);
     ESP_LOGI("TIMER", "ble_notified_count: %zu", ble_notified_count);
     ESP_LOGI("TIMER", "MCP_TIMER: %zu microsec", (size_t)mcp_timer);
-    ESP_LOGI("TIMER", "Sample, %" PRIi32 " mV %" PRIi32 " mV", ADC1_MV, ADC2_MV);
+    ESP_LOGI("TIMER", "Sample, %" PRIi32 " mV %" PRIi32 " mV", ADC0_MV, ADC1_MV);
     ESP_LOGI("TIMER", "");
     CAN_IN_COUNT = 0;
     CAN_OUT_COUNT = 0;
@@ -411,17 +411,17 @@ void init_can()
     }
 }
 
-uint8_t calc_oil_pressure(uint32_t adc_mv)
+uint16_t calc_oil_pressure(uint32_t adc_mv)
 {
     if (adc_mv < OIL_PRESSURE_VL)
         adc_mv = 0;
     else
         adc_mv -= OIL_PRESSURE_VL;
-    adc_mv = adc_mv * OIL_PRESSURE_PMAX / (OIL_PRESSURE_VH - OIL_PRESSURE_VL);
-    return (uint8_t)adc_mv;
+    adc_mv = adc_mv * OIL_PRESSURE_PMAX * 10 / (OIL_PRESSURE_VH - OIL_PRESSURE_VL);
+    return (uint16_t)adc_mv;
 }
 
-void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv)
+void update_adc(uint32_t *adc0_mv, uint32_t *adc1_mv)
 {
     static uint8_t result[ADC_FRAME_SIZE * 2] = {0};
 
@@ -463,28 +463,32 @@ void update_adc(uint32_t *adc1_mv, uint32_t *adc2_mv)
         else
             adc_sum[i] = 0;
     }
-    *adc1_mv = adc_sum[0] * (OIL_PRESSURE_R1 + OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
-    *adc2_mv = adc_sum[1] * (OIL_PRESSURE_R1 + OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
+    *adc0_mv = adc_sum[0] * (OIL_PRESSURE_R1 + OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
+    *adc1_mv = adc_sum[1] * (OIL_PRESSURE_R1 + OIL_PRESSURE_R2) / OIL_PRESSURE_R1;
 
 #ifdef CANMIM_PRINT_METRICS
+    ADC0_MV = *adc0_mv;
     ADC1_MV = *adc1_mv;
-    ADC2_MV = *adc2_mv;
 #endif
 }
 
-void send_adc_data_to_can(uint32_t adc1_mv, uint32_t adc2_mv)
+void send_adc_data_to_can(uint32_t adc0_mv, uint32_t adc1_mv)
 {
-    uint8_t pressure = calc_oil_pressure(adc1_mv);
+    uint16_t pressure0 = calc_oil_pressure(adc0_mv);
+    uint16_t pressure1 = calc_oil_pressure(adc1_mv);
     can_frame_t frame;
     memset(&frame, 0, sizeof(can_frame_t));
     frame.timestamp = esp_timer_get_time() / 1000;
     frame.can_id = OIL_PRESSURE_CAN_ID;
     frame.can_dlc = 8;
-    frame.data[0] = pressure;
-    frame.data[1] = adc1_mv & 0xFF;
-    frame.data[2] = (adc1_mv >> 8) & 0xFF;
-    frame.data[3] = adc2_mv & 0xFF;
-    frame.data[4] = (adc2_mv >> 8) & 0xFF;
+    frame.data[0] = pressure0 & 0xFF;
+    frame.data[1] = (pressure0 >> 8) & 0xFF;
+    frame.data[2] = pressure1 & 0xFF;
+    frame.data[3] = (pressure1 >> 8) & 0xFF;
+    frame.data[4] = adc0_mv & 0xFF;
+    frame.data[5] = (adc0_mv >> 8) & 0xFF;
+    frame.data[6] = adc1_mv & 0xFF;
+    frame.data[7] = (adc1_mv >> 8) & 0xFF;
     if (xQueueSend(canOutputQueue, &frame, 0) != pdTRUE)
     {
         ESP_LOGE("ADC", "Output CAN Queue Full");
@@ -543,12 +547,12 @@ void incomingCANTask(void *pvParameter)
 
     for (;;)
     {
-        uint32_t adc1_mv, adc2_mv;
+        uint32_t adc0_mv, adc1_mv;
         if (shouldUpdateADC)
         {
             shouldUpdateADC = false;
-            update_adc(&adc1_mv, &adc2_mv);
-            send_adc_data_to_can(adc1_mv, adc2_mv);
+            update_adc(&adc0_mv, &adc1_mv);
+            send_adc_data_to_can(adc0_mv, adc1_mv);
         }
         handling_incoming_message();
     }
