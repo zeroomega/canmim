@@ -44,40 +44,28 @@ static uint8_t adv_config_done = 0;
 #define adv_config_flag (1 << 0)
 #define scan_rsp_config_flag (1 << 1)
 
-static uint8_t adv_service_uuid128[32] = {
+static uint8_t adv_service_uuid128[16] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     // first uuid, 16bit, [12],[13] is the value
+    // 00001ff8-0000-1000-8000-00805f9b34fb
     0xfb,
     0x34,
     0x9b,
     0x5f,
     0x80,
     0x00,
+
     0x00,
     0x80,
+
     0x00,
     0x10,
+
     0x00,
     0x00,
-    0xEE,
-    0x00,
-    0x00,
-    0x00,
-    // second uuid, 32bit, [12], [13], [14], [15] is the value
-    0xfb,
-    0x34,
-    0x9b,
-    0x5f,
-    0x80,
-    0x00,
-    0x00,
-    0x80,
-    0x00,
-    0x10,
-    0x00,
-    0x00,
-    0xFF,
-    0x00,
+
+    0xf8,
+    0x1f,
     0x00,
     0x00,
 };
@@ -202,16 +190,20 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     switch (event)
     {
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
+        ESP_LOGI(GATTS_TAG, "ADV_DATA_SET received");
         adv_config_done &= (~adv_config_flag);
         if (adv_config_done == 0)
         {
+            ESP_LOGI(GATTS_TAG, "ADV_DATA_SET, start advertising");
             esp_ble_gap_start_advertising(&adv_params);
         }
         break;
     case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
+        ESP_LOGI(GATTS_TAG, "SCAN_RSP_DATA_SET received");
         adv_config_done &= (~scan_rsp_config_flag);
         if (adv_config_done == 0)
         {
+            ESP_LOGI(GATTS_TAG, "SCAN_RSP_DATA_SET, start advertising");
             esp_ble_gap_start_advertising(&adv_params);
         }
         break;
@@ -220,6 +212,9 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS)
         {
             ESP_LOGE(GATTS_TAG, "Advertising start failed");
+        } else
+        {
+            ESP_LOGI(GATTS_TAG, "Start adv successfully");
         }
         break;
     case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:

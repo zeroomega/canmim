@@ -197,9 +197,7 @@ void set_ble_name_from_mac()
     if (ble_name_len > sizeof(ble_name) - 4)
         ble_name_len = sizeof(ble_name) - 4;
     memcpy(ble_name, BLE_DEVICE_NAME_BASE, ble_name_len);
-    int ble_num = ble_mac[4] + ble_mac[5];
-    ble_num = ble_num * 2621 % 100;
-    int char_count = sprintf(ble_name + ble_name_len, "%d", ble_num);
+    int char_count = sprintf(ble_name + ble_name_len, "_%02X%02X", ble_mac[4], ble_mac[5]);
     ble_name_len += char_count;
     ble_name[ble_name_len] = 0;
     set_ble_name(ble_name, ble_name_len);
