@@ -35,6 +35,6 @@
 // Define CANMIM_PRINT_METRICS to print sample data every second to log
 #define CANMIM_PRINT_METRICS
 
-#define BLE_DEVICE_NAME_BASE "ESPCAN"
+#define BLE_DEVICE_NAME_BASE "ECAN"
 
 #endif

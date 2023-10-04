@@ -241,10 +241,16 @@ void gpio_init()
         }
         vTaskDelay(50 / portTICK_PERIOD_MS);
         int level = gpio_get_level((gpio_num_t)ISO_PIN);
-        if (level)
-            can_isolation = true;
-        else
+        if (level) {
+            // Switch is ON
             can_isolation = false;
+            ESP_LOGI("GPIO", "ISO Pin is 1");
+        }
+        else {
+            // Switch is OFF
+            can_isolation = true;
+            ESP_LOGI("GPIO", "ISO Pin is 0");
+        }
     }
 #else
     can_isolation = ISO_OVERRIDE;
